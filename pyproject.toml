@@ -43,6 +43,27 @@ dependencies = [
 [project.optional-dependencies]
 # Variants with dependencies that will get installed on top of those listed unter
 # project.dependencies
+
+# Acceleration backends for improved performance
+parallel = [
+    "numba >= 0.57, < 1.0",  # CPU parallelization with JIT compilation
+]
+gpu = [
+    "torch >= 2.0",  # GPU acceleration (CUDA/MPS)
+]
+gpu-cuda = [
+    "jax[cuda12]",  # JAX with CUDA support for NVIDIA GPUs
+]
+benchmark = [
+    "pytest-benchmark",  # Performance benchmarking
+    "psutil",  # System resource monitoring
+    "memory-profiler",  # Memory usage profiling
+]
+# All acceleration features
+accel = [
+    "autoreject[parallel]",
+]
+
 test = [
     "mne_qt_browser",
     "PyQt6!=6.6.1",  # see line below

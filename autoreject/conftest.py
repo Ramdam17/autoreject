@@ -16,6 +16,16 @@ def pytest_configure(config):
     """Configure pytest options."""
     # Markers
     config.addinivalue_line('markers', 'pgtest')
+    config.addinivalue_line(
+        'markers',
+        'retrocompat: mark test as retrocompatibility test '
+        '(validates optimizations do not change results)'
+    )
+    config.addinivalue_line(
+        'markers',
+        'backends: mark test as backend infrastructure test '
+        '(tests for compute backend abstraction layer)'
+    )
 
     # Fixtures
     for fixture in ('matplotlib_config', 'close_all', 'check_verbose'):

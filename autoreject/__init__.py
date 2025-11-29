@@ -12,3 +12,4 @@ from .autoreject import RejectLog, read_auto_reject, read_reject_log
 from .autoreject import compute_thresholds, validation_curve, get_rejection_threshold
 from .ransac import Ransac
 from .utils import set_matplotlib_defaults
+from .backends import detect_hardware, get_backend, get_backend_names
