@@ -27,6 +27,7 @@ from .utils import (_clean_by_interp, interpolate_bads, _get_epochs_type,
                     _pbar, _handle_picks, _check_data, _compute_dots,
                     _get_picks_by_type, _pprint, _GDKW)
 from .bayesopt import expected_improvement, bayes_opt
+from .backends import get_backend
 
 
 _INIT_PARAMS = ('consensus', 'n_interpolate', 'picks',
@@ -556,7 +557,7 @@ class _AutoReject(BaseAutoReject):
         return '%s(%s)' % (class_name, _pprint(params,
                                                offset=len(class_name),),)
 
-    def _vote_bad_epochs(self, epochs, picks):
+    def _vote_bad_epochs(self, epochs, picks, backend=None):
         """Each channel votes for an epoch as good or bad.
 
         Parameters
@@ -565,13 +566,24 @@ class _AutoReject(BaseAutoReject):
             The epochs object for which bad epochs must be found.
         picks : array-like
             The indices of the channels to consider.
+        backend : Backend | None
+            Compute backend to use for peak-to-peak computation.
+            If None, auto-detect the best available backend.
         """
         labels = np.zeros((len(epochs), len(epochs.ch_names)))
         labels.fill(np.nan)
         bad_sensor_counts = np.zeros((len(epochs),))
 
         this_ch_names = [epochs.ch_names[p] for p in picks]
-        deltas = np.ptp(epochs.get_data(picks, **_GDKW), axis=-1).T
+        
+        # Use backend for accelerated ptp computation
+        if backend is None:
+            backend = get_backend()
+        data = epochs.get_data(picks, **_GDKW)
+        # data shape: (n_epochs, n_channels, n_times)
+        # ptp along time axis, then transpose to (n_channels, n_epochs)
+        deltas = backend.ptp(data, axis=-1).T
+        
         threshes = [self.threshes_[ch_name] for ch_name in this_ch_names]
         for ch_idx, (delta, thresh) in enumerate(zip(deltas, threshes)):
             bad_epochs_idx = np.where(delta > thresh)[0]
@@ -767,20 +779,92 @@ class _AutoReject(BaseAutoReject):
             return epochs_clean
 
 
+def _interpolate_single_epoch(epoch_data, info, interp_chs, dots, picks):
+    """Interpolate a single epoch (helper for parallelization).
+    
+    Parameters
+    ----------
+    epoch_data : ndarray, shape (n_channels, n_times)
+        The data for a single epoch.
+    info : mne.Info
+        The info object.
+    interp_chs : list of str
+        Channel names to interpolate.
+    dots : tuple | None
+        Precomputed dots for interpolation.
+    picks : array-like
+        Channel indices to consider.
+    
+    Returns
+    -------
+    interpolated_data : ndarray, shape (n_channels, n_times)
+        The interpolated epoch data.
+    """
+    from mne import EpochsArray
+    
+    # Create a minimal epochs object for this single epoch
+    epoch = EpochsArray(epoch_data[np.newaxis, :, :], info, verbose=False)
+    epoch.info['bads'] = interp_chs
+    interpolate_bads(epoch, dots=dots, picks=picks, reset_bads=True)
+    return epoch._data[0]
+
+
 def _interpolate_bad_epochs(
-        epochs, interp_channels, picks, dots=None, verbose=True):
-    """Actually do the interpolation."""
+        epochs, interp_channels, picks, dots=None, verbose=True, n_jobs=1):
+    """Actually do the interpolation.
+    
+    Parameters
+    ----------
+    epochs : mne.Epochs
+        The epochs to interpolate (modified in-place).
+    interp_channels : list of list of str
+        For each epoch, list of channel names to interpolate.
+    picks : array-like
+        Channel indices to consider.
+    dots : tuple | None
+        Precomputed dots for interpolation.
+    verbose : bool
+        Whether to show progress bar.
+    n_jobs : int
+        Number of parallel jobs. Default 1 (sequential).
+    """
     assert len(epochs) == len(interp_channels)
     pos = 2
-
-    for epoch_idx, interp_chs in _pbar(
-            list(enumerate(interp_channels)),
-            desc='Repairing epochs',
-            position=pos, leave=True, verbose=verbose):
-        epoch = epochs[epoch_idx]
-        epoch.info['bads'] = interp_chs
-        interpolate_bads(epoch, dots=dots, picks=picks, reset_bads=True)
-        epochs._data[epoch_idx] = epoch._data
+    
+    # Check if we can parallelize (n_jobs > 1 and enough epochs)
+    if n_jobs != 1 and len(epochs) > 1:
+        # Parallel execution
+        parallel = Parallel(n_jobs=n_jobs, verbose=0)
+        my_interp = delayed(_interpolate_single_epoch)
+        
+        results = parallel(
+            my_interp(
+                epochs._data[epoch_idx].copy(),
+                epochs.info,
+                interp_chs,
+                dots,
+                picks
+            )
+            for epoch_idx, interp_chs in _pbar(
+                list(enumerate(interp_channels)),
+                desc='Repairing epochs (parallel)',
+                position=pos, leave=True, verbose=verbose
+            )
+        )
+        
+        # Update epochs data with interpolated results
+        for epoch_idx, interpolated_data in enumerate(results):
+            epochs._data[epoch_idx] = interpolated_data
+    else:
+        # Sequential execution (original behavior)
+        for epoch_idx, interp_chs in _pbar(
+                list(enumerate(interp_channels)),
+                desc='Repairing epochs',
+                position=pos, leave=True, verbose=verbose):
+            epoch = epochs[epoch_idx]
+            epoch.info['bads'] = interp_chs
+            interpolate_bads(epoch, dots=dots, picks=picks, reset_bads=True)
+            epochs._data[epoch_idx] = epoch._data
 
 
 def _run_local_reject_cv(epochs, thresh_func, picks_, n_interpolate, cv,
