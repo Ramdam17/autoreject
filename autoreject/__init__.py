@@ -16,3 +16,14 @@ from .backends import (
     detect_hardware, get_backend, get_backend_names,
     DeviceArray, is_device_array
 )
+
+# GPU interpolation functions (optional - only available with torch backend)
+try:
+    from .gpu_interpolation import (
+        gpu_make_interpolation_matrix,
+        gpu_do_interp_dots,
+        gpu_interpolate_bads_eeg,
+        gpu_clean_by_interp,
+    )
+except ImportError:
+    pass  # torch not installed
