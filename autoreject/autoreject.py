@@ -93,7 +93,8 @@ def validation_curve(epochs, y=None, param_name="thresh", param_range=None,
     n_epochs, n_channels, n_times = X.shape
 
     if param_range is None:
-        ptps = np.ptp(X, axis=2)
+        backend = get_backend()
+        ptps = backend.ptp(X, axis=2)
         param_range = np.linspace(ptps.min(), ptps.max(), 15)
 
     estimator.n_channels = n_channels
@@ -152,13 +153,19 @@ class BaseAutoReject(BaseEstimator):
     """Base class for rejection."""
 
     def score(self, X, y=None):
-        """Score it."""
+        """Score it.
+        
+        Uses GPU-accelerated median computation when available.
+        """
         if hasattr(self, 'n_channels'):
             X = X.reshape(-1, self.n_channels, self.n_times)
         if np.any(np.isnan(self.mean_)):
             return -np.inf
         else:
-            return -np.sqrt(np.mean((np.median(X, axis=0) - self.mean_) ** 2))
+            # Use backend for median computation (GPU-accelerated if available)
+            backend = get_backend()
+            median_X = backend.median(X, axis=0)
+            return -np.sqrt(np.mean((median_X - self.mean_) ** 2))
 
 
 class _GlobalAutoReject(BaseAutoReject):
@@ -181,13 +188,18 @@ class _GlobalAutoReject(BaseAutoReject):
         self.n_times = n_times
 
     def fit(self, X, y=None):
-        """Fit it."""
+        """Fit it.
+        
+        Uses GPU-accelerated ptp computation when available.
+        """
         if self.n_channels is None or self.n_times is None:
             raise ValueError('Cannot fit without knowing n_channels'
                              ' and n_times')
         X = X.reshape(-1, self.n_channels, self.n_times)
-        deltas = np.array([np.ptp(d, axis=1) for d in X])
-        epoch_deltas = deltas.max(axis=1)
+        # Use backend for ptp computation (GPU-accelerated if available)
+        backend = get_backend()
+        deltas = backend.ptp(X, axis=-1)  # (n_epochs, n_channels)
+        epoch_deltas = np.max(deltas, axis=1)  # max across channels
         keep = epoch_deltas <= self.thresh
         self.mean_ = _slicemean(X, keep, axis=0)
         return self
@@ -265,8 +277,9 @@ def get_rejection_threshold(epochs, decim=1, random_state=None,
 
         X = epochs.get_data(picks, **_GDKW)
         n_epochs, n_channels, n_times = X.shape
-        deltas = np.array([np.ptp(d, axis=1) for d in X])
-        all_threshes = np.sort(deltas.max(axis=1))
+        backend = get_backend()
+        deltas = backend.ptp(X, axis=-1)  # (n_epochs, n_channels)
+        all_threshes = np.sort(np.max(deltas, axis=1))
 
         if verbose:
             print('Estimating rejection dictionary for %s' % ch_type)
@@ -314,15 +327,19 @@ class _ChannelAutoReject(BaseAutoReject):
         y : None
             Redundant. Necessary to be compatible with sklearn
             API.
+            
+        Uses GPU-accelerated ptp computation when available.
         """
-        deltas = np.ptp(X, axis=1)
+        backend = get_backend()
+        deltas = backend.ptp(X, axis=1)
         self.deltas_ = deltas
         keep = deltas <= self.thresh
         # XXX: actually go over all the folds before setting the min
         # in skopt. Otherwise, may confuse skopt.
-        if self.thresh < np.min(np.ptp(X, axis=1)):
+        min_ptp = np.min(backend.ptp(X, axis=1))
+        if self.thresh < min_ptp:
             assert np.sum(keep) == 0
-            keep = deltas <= np.min(np.ptp(X, axis=1))
+            keep = deltas <= min_ptp
         self.mean_ = _slicemean(X, keep, axis=0)
         return self
 
@@ -355,7 +372,8 @@ def _compute_thresh(this_data, method='bayesian_optimization',
     autoreject with scipy version 0.16 or greater.
     """
     est = _ChannelAutoReject()
-    all_threshes = np.sort(np.ptp(this_data, axis=1))
+    backend = get_backend()
+    all_threshes = np.sort(backend.ptp(this_data, axis=1))
 
     if method == 'random_search':
         param_dist = dict(thresh=uniform(all_threshes[0],
@@ -612,7 +630,8 @@ class _AutoReject(BaseAutoReject):
                 else:
                     # get peak-to-peak for channels in that epoch
                     data = epochs[epoch_idx].get_data(**_GDKW)[0]
-                    peaks = np.ptp(data, axis=-1)
+                    backend = get_backend()
+                    peaks = backend.ptp(data, axis=-1)
                     peaks[non_picks] = -np.inf
                     # find channels which are bad by rejection threshold
                     interp_chs_mask = labels[epoch_idx] == 1
