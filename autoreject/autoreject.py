@@ -868,7 +868,37 @@ def _interpolate_bad_epochs(
 
 
 def _run_local_reject_cv(epochs, thresh_func, picks_, n_interpolate, cv,
-                         consensus, dots, verbose):
+                         consensus, dots, verbose, n_jobs=1):
+    """Run local reject with cross-validation.
+    
+    Parameters
+    ----------
+    epochs : mne.Epochs
+        The epochs to process.
+    thresh_func : callable
+        Function to compute thresholds.
+    picks_ : array-like
+        Channel indices.
+    n_interpolate : array-like
+        Values of n_interpolate to try.
+    cv : sklearn cross-validator
+        Cross-validation object.
+    consensus : array-like
+        Values of consensus to try.
+    dots : tuple | None
+        Precomputed dots for interpolation.
+    verbose : bool
+        Whether to show progress.
+    n_jobs : int
+        Number of parallel jobs for interpolation. Default 1.
+    
+    Returns
+    -------
+    local_reject : _AutoReject
+        Fitted autoreject instance.
+    loss : ndarray
+        Loss array of shape (n_consensus, n_interpolate, n_folds).
+    """
     n_folds = cv.get_n_splits()
     loss = np.zeros((len(consensus), len(n_interpolate),
                      n_folds))
@@ -897,9 +927,10 @@ def _run_local_reject_cv(epochs, thresh_func, picks_, n_interpolate, cv,
         interp_channels = _get_interp_chs(labels, epochs.ch_names, picks_)
         epochs_interp = epochs.copy()
         # for learning we need to go by channnel type, even for meg
+        # Use n_jobs for parallel interpolation
         _interpolate_bad_epochs(
             epochs_interp, interp_channels=interp_channels,
-            picks=picks_, dots=dots, verbose=verbose)
+            picks=picks_, dots=dots, verbose=verbose, n_jobs=n_jobs)
 
         # Hack to allow len(self.cv_.split(X)) as ProgressBar
         # assumes an iterable whereas self.cv_.split(X) is a
@@ -1125,7 +1156,7 @@ class AutoReject:
                 _run_local_reject_cv(epochs, thresh_func, this_picks,
                                      self.n_interpolate, self.cv_,
                                      self.consensus, self.dots,
-                                     self.verbose)
+                                     self.verbose, n_jobs=self.n_jobs)
             self.threshes_.update(this_local_reject.threshes_)
 
             best_idx, best_jdx = \
