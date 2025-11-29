@@ -496,3 +496,256 @@ class TestGetBackendNames:
         
         names = get_backend_names()
         assert all(isinstance(n, str) for n in names)
+
+
+# =============================================================================
+# Tests for DeviceArray and keep_on_device API (Phase 6)
+# =============================================================================
+
+class TestDeviceArray:
+    """Tests for DeviceArray wrapper class."""
+    
+    def test_device_array_creation(self):
+        """Test creating a DeviceArray."""
+        from autoreject.backends import get_backend, DeviceArray
+        
+        backend = get_backend(prefer='numpy')
+        data = np.random.randn(10, 5)
+        
+        arr = backend.to_device(data)
+        assert isinstance(arr, DeviceArray)
+        assert arr.shape == data.shape
+        assert arr.device == 'cpu'
+    
+    def test_device_array_numpy_conversion(self):
+        """Test converting DeviceArray back to numpy."""
+        from autoreject.backends import get_backend
+        
+        backend = get_backend(prefer='numpy')
+        data = np.random.randn(10, 5)
+        
+        arr = backend.to_device(data)
+        result = arr.numpy()
+        
+        assert isinstance(result, np.ndarray)
+        assert_allclose(result, data)
+    
+    def test_device_array_properties(self):
+        """Test DeviceArray properties."""
+        from autoreject.backends import get_backend, DeviceArray
+        
+        backend = get_backend(prefer='numpy')
+        data = np.random.randn(10, 5, 3)
+        
+        arr = backend.to_device(data)
+        
+        assert arr.shape == (10, 5, 3)
+        assert arr.ndim == 3
+        assert len(arr) == 10
+        assert arr.backend is backend
+    
+    def test_is_device_array(self):
+        """Test is_device_array helper."""
+        from autoreject.backends import get_backend, is_device_array
+        
+        backend = get_backend(prefer='numpy')
+        data = np.random.randn(10, 5)
+        
+        arr = backend.to_device(data)
+        
+        assert is_device_array(arr) is True
+        assert is_device_array(data) is False
+        assert is_device_array([1, 2, 3]) is False
+
+
+class TestKeepOnDevice:
+    """Tests for keep_on_device parameter."""
+    
+    def test_ptp_keep_on_device_false(self):
+        """Test ptp returns numpy when keep_on_device=False."""
+        from autoreject.backends import get_backend, DeviceArray
+        
+        backend = get_backend(prefer='numpy')
+        data = np.random.randn(10, 5, 100)
+        
+        result = backend.ptp(data, axis=-1, keep_on_device=False)
+        assert isinstance(result, np.ndarray)
+        assert not isinstance(result, DeviceArray)
+    
+    def test_ptp_keep_on_device_true(self):
+        """Test ptp returns DeviceArray when keep_on_device=True."""
+        from autoreject.backends import get_backend, DeviceArray
+        
+        backend = get_backend(prefer='numpy')
+        data = np.random.randn(10, 5, 100)
+        
+        result = backend.ptp(data, axis=-1, keep_on_device=True)
+        assert isinstance(result, DeviceArray)
+    
+    def test_median_keep_on_device(self):
+        """Test median with keep_on_device."""
+        from autoreject.backends import get_backend, DeviceArray
+        
+        backend = get_backend(prefer='numpy')
+        data = np.random.randn(10, 5)
+        
+        result_numpy = backend.median(data, axis=0, keep_on_device=False)
+        result_device = backend.median(data, axis=0, keep_on_device=True)
+        
+        assert isinstance(result_numpy, np.ndarray)
+        assert isinstance(result_device, DeviceArray)
+        assert_allclose(result_numpy, result_device.numpy())
+    
+    def test_correlation_keep_on_device(self):
+        """Test correlation with keep_on_device."""
+        from autoreject.backends import get_backend, DeviceArray
+        
+        backend = get_backend(prefer='numpy')
+        x = np.random.randn(100, 5)
+        y = np.random.randn(100, 5)
+        
+        result_numpy = backend.correlation(x, y, keep_on_device=False)
+        result_device = backend.correlation(x, y, keep_on_device=True)
+        
+        assert isinstance(result_numpy, np.ndarray)
+        assert isinstance(result_device, DeviceArray)
+        assert_allclose(result_numpy, result_device.numpy())
+    
+    def test_matmul_keep_on_device(self):
+        """Test matmul with keep_on_device."""
+        from autoreject.backends import get_backend, DeviceArray
+        
+        backend = get_backend(prefer='numpy')
+        a = np.random.randn(10, 5)
+        b = np.random.randn(5, 3)
+        
+        result_numpy = backend.matmul(a, b, keep_on_device=False)
+        result_device = backend.matmul(a, b, keep_on_device=True)
+        
+        assert isinstance(result_numpy, np.ndarray)
+        assert isinstance(result_device, DeviceArray)
+        assert_allclose(result_numpy, result_device.numpy())
+
+
+class TestDeviceArrayChaining:
+    """Tests for chaining operations on DeviceArrays."""
+    
+    def test_operations_on_device_array(self):
+        """Test that operations can accept DeviceArray as input."""
+        from autoreject.backends import get_backend, DeviceArray
+        
+        backend = get_backend(prefer='numpy')
+        data = np.random.randn(10, 5, 100)
+        
+        # Transfer to device
+        gpu_data = backend.to_device(data)
+        
+        # Chain operations
+        result1 = backend.ptp(gpu_data, axis=-1, keep_on_device=True)
+        result2 = backend.median(result1, axis=0, keep_on_device=True)
+        
+        # Both intermediate results should be DeviceArrays
+        assert isinstance(result1, DeviceArray)
+        assert isinstance(result2, DeviceArray)
+        
+        # Final conversion to numpy
+        final = backend.to_numpy(result2)
+        assert isinstance(final, np.ndarray)
+    
+    def test_mixed_input_types(self):
+        """Test that backends handle mixed numpy and DeviceArray inputs."""
+        from autoreject.backends import get_backend
+        
+        backend = get_backend(prefer='numpy')
+        x_np = np.random.randn(100, 5)
+        y_device = backend.to_device(np.random.randn(100, 5))
+        
+        # Should work with mixed types
+        result = backend.correlation(x_np, y_device, keep_on_device=False)
+        assert isinstance(result, np.ndarray)
+
+
+@pytest.mark.skipif(
+    not pytest.importorskip('torch', reason="PyTorch not installed"),
+    reason="PyTorch not installed"
+)
+class TestTorchDeviceArray:
+    """Tests for DeviceArray with PyTorch backend."""
+    
+    def test_torch_to_device(self):
+        """Test transferring data to GPU with torch backend."""
+        from autoreject.backends import get_backend, DeviceArray
+        
+        backend = get_backend(prefer='torch')
+        data = np.random.randn(10, 5, 100)
+        
+        gpu_data = backend.to_device(data)
+        
+        assert isinstance(gpu_data, DeviceArray)
+        # Device should be cuda, mps, or cpu depending on hardware
+        assert gpu_data.device in ('cuda', 'mps', 'cpu')
+    
+    def test_torch_operations_stay_on_gpu(self):
+        """Test that operations with keep_on_device=True stay on GPU."""
+        import torch
+        from autoreject.backends import get_backend, DeviceArray
+        
+        backend = get_backend(prefer='torch')
+        data = np.random.randn(10, 5, 100)
+        
+        gpu_data = backend.to_device(data)
+        result = backend.ptp(gpu_data, axis=-1, keep_on_device=True)
+        
+        # Result should be a DeviceArray containing a torch.Tensor
+        assert isinstance(result, DeviceArray)
+        assert isinstance(result.data, torch.Tensor)
+        # Tensor should be on the same device as the backend
+        assert result.data.device.type == backend._device.type
+    
+    def test_torch_chain_without_transfer(self):
+        """Test chaining operations without CPU<->GPU transfers."""
+        import torch
+        from autoreject.backends import get_backend, DeviceArray
+        
+        backend = get_backend(prefer='torch')
+        data = np.random.randn(50, 32, 200)
+        
+        # Single transfer to GPU
+        gpu_data = backend.to_device(data)
+        
+        # Chain of operations - all stay on GPU
+        ptp_result = backend.ptp(gpu_data, axis=-1, keep_on_device=True)
+        med_result = backend.median(ptp_result, axis=0, keep_on_device=True)
+        
+        # Verify all intermediate results are torch tensors on device
+        assert isinstance(ptp_result.data, torch.Tensor)
+        assert isinstance(med_result.data, torch.Tensor)
+        assert ptp_result.data.device.type == backend._device.type
+        assert med_result.data.device.type == backend._device.type
+        
+        # Single transfer back to CPU
+        final = backend.to_numpy(med_result)
+        assert isinstance(final, np.ndarray)
+    
+    def test_torch_extended_operations(self):
+        """Test extended operations available in TorchBackend."""
+        from autoreject.backends import get_backend, DeviceArray
+        
+        backend = get_backend(prefer='torch')
+        data = np.random.randn(10, 5)
+        
+        gpu_data = backend.to_device(data)
+        
+        # Test extended operations
+        zeros = backend.zeros((5, 3))
+        assert isinstance(zeros, DeviceArray)
+        
+        result_sum = backend.sum(gpu_data, axis=0, keep_on_device=True)
+        assert isinstance(result_sum, DeviceArray)
+        
+        result_mean = backend.mean(gpu_data, axis=0, keep_on_device=True)
+        assert isinstance(result_mean, DeviceArray)
+        
+        result_sqrt = backend.sqrt(backend.abs(gpu_data, keep_on_device=True), keep_on_device=True)
+        assert isinstance(result_sqrt, DeviceArray)
+

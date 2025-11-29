@@ -6,6 +6,7 @@ compute backends (NumPy, Numba, PyTorch, JAX). It enables:
 - Automatic hardware detection (CPU, CUDA, MPS)
 - Graceful fallback when optional dependencies are not installed
 - User-configurable backend selection via environment variable
+- **Data-on-GPU architecture** for avoiding CPU↔GPU transfer overhead
 
 Usage
 -----
@@ -14,6 +15,12 @@ Usage
 >>> # Auto-detect best available backend
 >>> backend = get_backend()
 >>> result = backend.ptp(data, axis=-1)
+>>> 
+>>> # Keep data on GPU (avoid transfers)
+>>> gpu_data = backend.to_device(data)
+>>> result = backend.ptp(gpu_data, axis=-1, keep_on_device=True)
+>>> # ... more operations on result ...
+>>> final = backend.to_numpy(result)  # Transfer only at the end
 >>> 
 >>> # Force a specific backend
 >>> backend = get_backend(prefer='numba')
@@ -38,7 +45,143 @@ from functools import lru_cache
 import numpy as np
 
 
-__all__ = ['detect_hardware', 'get_backend', 'get_backend_names']
+__all__ = ['detect_hardware', 'get_backend', 'get_backend_names', 
+           'DeviceArray', 'is_device_array']
+
+
+# =============================================================================
+# DeviceArray - Wrapper for GPU-resident arrays
+# =============================================================================
+
+class DeviceArray:
+    """Wrapper for arrays that may reside on CPU or GPU.
+    
+    This class provides a unified interface for tracking array location
+    and enables the data-on-GPU architecture where arrays stay on the
+    accelerator throughout a computation pipeline.
+    
+    Parameters
+    ----------
+    data : array-like
+        The underlying array (numpy, torch.Tensor, jax.Array, etc.)
+    backend : BaseBackend
+        The backend that created this array.
+    device : str
+        Device location ('cpu', 'cuda', 'mps', etc.)
+    
+    Attributes
+    ----------
+    data : array-like
+        The underlying array.
+    backend : BaseBackend
+        The backend managing this array.
+    device : str
+        Current device location.
+    shape : tuple
+        Array shape.
+    dtype : dtype
+        Array data type.
+    
+    Examples
+    --------
+    >>> backend = get_backend(prefer='torch')
+    >>> gpu_arr = backend.to_device(numpy_data)
+    >>> isinstance(gpu_arr, DeviceArray)
+    True
+    >>> gpu_arr.device
+    'mps'
+    >>> result = backend.ptp(gpu_arr, keep_on_device=True)
+    >>> numpy_result = backend.to_numpy(result)
+    """
+    
+    def __init__(self, data, backend, device):
+        self._data = data
+        self._backend = backend
+        self._device = device
+    
+    @property
+    def data(self):
+        """Return the underlying array."""
+        return self._data
+    
+    @property
+    def backend(self):
+        """Return the backend managing this array."""
+        return self._backend
+    
+    @property
+    def device(self):
+        """Return the device location."""
+        return self._device
+    
+    @property
+    def shape(self):
+        """Return the array shape."""
+        return self._data.shape
+    
+    @property
+    def dtype(self):
+        """Return the array dtype."""
+        if hasattr(self._data, 'dtype'):
+            return self._data.dtype
+        return type(self._data)
+    
+    @property
+    def ndim(self):
+        """Return the number of dimensions."""
+        return len(self.shape)
+    
+    def numpy(self):
+        """Convert to NumPy array (transfers from GPU if needed)."""
+        return self._backend.to_numpy(self._data)
+    
+    def __repr__(self):
+        return (f"DeviceArray(shape={self.shape}, dtype={self.dtype}, "
+                f"device='{self._device}', backend='{self._backend.name}')")
+    
+    def __len__(self):
+        return self.shape[0]
+    
+    def __getitem__(self, idx):
+        """Support indexing (returns DeviceArray if on GPU)."""
+        result = self._data[idx]
+        if self._device != 'cpu':
+            return DeviceArray(result, self._backend, self._device)
+        return result
+
+
+def is_device_array(arr):
+    """Check if an array is a DeviceArray.
+    
+    Parameters
+    ----------
+    arr : array-like
+        Array to check.
+    
+    Returns
+    -------
+    bool
+        True if arr is a DeviceArray.
+    """
+    return isinstance(arr, DeviceArray)
+
+
+def _unwrap_device_array(arr):
+    """Unwrap DeviceArray to get underlying data.
+    
+    Parameters
+    ----------
+    arr : array-like or DeviceArray
+        Input array.
+    
+    Returns
+    -------
+    data : array-like
+        The underlying array data.
+    """
+    if isinstance(arr, DeviceArray):
+        return arr._data
+    return arr
 
 
 # =============================================================================
@@ -298,59 +441,116 @@ class BaseBackend:
         Backend name ('numpy', 'numba', 'torch', 'jax').
     device : str
         Device description ('cpu', 'cuda:0', 'mps', etc.).
+    supports_gpu : bool
+        Whether this backend supports GPU acceleration.
     """
     
     name = 'base'
     device = 'cpu'
+    supports_gpu = False
     
-    def ptp(self, data, axis=-1):
+    def to_device(self, data):
+        """Transfer data to the backend's device.
+        
+        For GPU backends, this transfers data to GPU memory.
+        For CPU backends, this is a no-op that returns a DeviceArray wrapper.
+        
+        Parameters
+        ----------
+        data : array-like or DeviceArray
+            Input array.
+        
+        Returns
+        -------
+        result : DeviceArray
+            Array wrapped in DeviceArray, potentially on GPU.
+        
+        Examples
+        --------
+        >>> backend = get_backend(prefer='torch')
+        >>> gpu_data = backend.to_device(numpy_array)
+        >>> gpu_data.device
+        'mps'
+        """
+        raise NotImplementedError
+    
+    def ptp(self, data, axis=-1, keep_on_device=False):
         """Compute peak-to-peak (max - min) along an axis.
         
         Parameters
         ----------
-        data : array-like
+        data : array-like or DeviceArray
             Input array.
         axis : int
             Axis along which to compute ptp. Default: -1.
+        keep_on_device : bool
+            If True, return DeviceArray staying on device.
+            If False (default), return NumPy array.
         
         Returns
         -------
-        result : ndarray
+        result : ndarray or DeviceArray
             Peak-to-peak values.
         """
         raise NotImplementedError
     
-    def median(self, data, axis=None):
+    def median(self, data, axis=None, keep_on_device=False):
         """Compute median along an axis.
         
         Parameters
         ----------
-        data : array-like
+        data : array-like or DeviceArray
             Input array.
         axis : int | None
             Axis along which to compute median. Default: None (all elements).
+        keep_on_device : bool
+            If True, return DeviceArray staying on device.
+            If False (default), return NumPy array.
         
         Returns
         -------
-        result : ndarray | scalar
+        result : ndarray or DeviceArray or scalar
             Median values.
         """
         raise NotImplementedError
     
-    def correlation(self, x, y):
+    def correlation(self, x, y, keep_on_device=False):
         """Compute correlation between two arrays.
         
         Parameters
         ----------
-        x : array-like, shape (n_times, n_channels)
+        x : array-like or DeviceArray, shape (n_times, n_channels)
             First array.
-        y : array-like, shape (n_times, n_channels)
+        y : array-like or DeviceArray, shape (n_times, n_channels)
             Second array.
+        keep_on_device : bool
+            If True, return DeviceArray staying on device.
+            If False (default), return NumPy array.
         
         Returns
         -------
-        corr : ndarray, shape (n_channels,)
+        corr : ndarray or DeviceArray, shape (n_channels,)
             Correlation coefficients.
+        """
+        raise NotImplementedError
+    
+    def matmul(self, a, b, keep_on_device=False):
+        """Matrix multiplication.
+        
+        Parameters
+        ----------
+        a : array-like or DeviceArray
+            First matrix.
+        b : array-like or DeviceArray
+            Second matrix.
+        keep_on_device : bool
+            If True, return DeviceArray staying on device.
+            If False (default), return NumPy array.
+        
+        Returns
+        -------
+        result : ndarray or DeviceArray
+            Matrix product.
         """
         raise NotImplementedError
     
@@ -359,7 +559,7 @@ class BaseBackend:
         
         Parameters
         ----------
-        arr : array-like
+        arr : array-like or DeviceArray
             Input array (may be on GPU or in different format).
         
         Returns
@@ -368,6 +568,23 @@ class BaseBackend:
             NumPy array on CPU.
         """
         raise NotImplementedError
+    
+    def is_on_device(self, arr):
+        """Check if array is on this backend's device.
+        
+        Parameters
+        ----------
+        arr : array-like or DeviceArray
+            Array to check.
+        
+        Returns
+        -------
+        bool
+            True if array is on device (GPU for GPU backends).
+        """
+        if isinstance(arr, DeviceArray):
+            return arr.device == self.device
+        return False
     
     def __repr__(self):
         return f"{self.__class__.__name__}(device='{self.device}')"
@@ -386,26 +603,56 @@ class NumpyBackend(BaseBackend):
     
     name = 'numpy'
     device = 'cpu'
+    supports_gpu = False
     
-    def ptp(self, data, axis=-1):
+    def to_device(self, data):
+        """Wrap data in DeviceArray (no transfer, already on CPU)."""
+        data = _unwrap_device_array(data)
+        arr = np.asarray(data)
+        return DeviceArray(arr, self, 'cpu')
+    
+    def ptp(self, data, axis=-1, keep_on_device=False):
         """Compute peak-to-peak using np.ptp."""
-        return np.ptp(data, axis=axis)
+        data = _unwrap_device_array(data)
+        result = np.ptp(data, axis=axis)
+        if keep_on_device:
+            return DeviceArray(result, self, 'cpu')
+        return result
     
-    def median(self, data, axis=None):
+    def median(self, data, axis=None, keep_on_device=False):
         """Compute median using np.median."""
-        return np.median(data, axis=axis)
+        data = _unwrap_device_array(data)
+        result = np.median(data, axis=axis)
+        if keep_on_device:
+            return DeviceArray(result, self, 'cpu')
+        return result
     
-    def correlation(self, x, y):
+    def correlation(self, x, y, keep_on_device=False):
         """Compute correlation between arrays.
         
         Uses the formula: corr = sum(x*y) / (||x|| * ||y||)
         """
+        x = _unwrap_device_array(x)
+        y = _unwrap_device_array(y)
         num = np.sum(x * y, axis=0)
         denom = np.sqrt(np.sum(x ** 2, axis=0)) * np.sqrt(np.sum(y ** 2, axis=0))
-        return num / denom
+        result = num / denom
+        if keep_on_device:
+            return DeviceArray(result, self, 'cpu')
+        return result
+    
+    def matmul(self, a, b, keep_on_device=False):
+        """Matrix multiplication using np.matmul."""
+        a = _unwrap_device_array(a)
+        b = _unwrap_device_array(b)
+        result = np.matmul(a, b)
+        if keep_on_device:
+            return DeviceArray(result, self, 'cpu')
+        return result
     
     def to_numpy(self, arr):
         """Return array as-is (already NumPy)."""
+        arr = _unwrap_device_array(arr)
         return np.asarray(arr)
 
 
@@ -427,6 +674,7 @@ class NumbaBackend(BaseBackend):
     
     name = 'numba'
     device = 'cpu (parallel)'
+    supports_gpu = False
     
     def __init__(self):
         """Initialize Numba backend."""
@@ -514,39 +762,70 @@ class NumbaBackend(BaseBackend):
         
         return _corr_impl
     
-    def ptp(self, data, axis=-1):
+    def to_device(self, data):
+        """Wrap data in DeviceArray (no transfer, Numba uses CPU)."""
+        data = _unwrap_device_array(data)
+        arr = np.asarray(data)
+        return DeviceArray(arr, self, 'cpu')
+    
+    def ptp(self, data, axis=-1, keep_on_device=False):
         """Compute peak-to-peak with Numba parallelization."""
+        data = _unwrap_device_array(data)
         data = np.asarray(data)
         
         # Use optimized implementations for common cases
         if data.ndim == 3 and axis == -1:
-            return self._ptp_3d(data)
+            result = self._ptp_3d(data)
         elif data.ndim == 2 and axis == -1:
-            return self._ptp_2d(data)
+            result = self._ptp_2d(data)
         else:
             # Fall back to NumPy for other cases
-            return np.ptp(data, axis=axis)
+            result = np.ptp(data, axis=axis)
+        
+        if keep_on_device:
+            return DeviceArray(result, self, 'cpu')
+        return result
     
-    def median(self, data, axis=None):
+    def median(self, data, axis=None, keep_on_device=False):
         """Compute median (falls back to NumPy)."""
+        data = _unwrap_device_array(data)
         # Numba doesn't have a good parallel median implementation
-        return np.median(data, axis=axis)
+        result = np.median(data, axis=axis)
+        if keep_on_device:
+            return DeviceArray(result, self, 'cpu')
+        return result
     
-    def correlation(self, x, y):
+    def correlation(self, x, y, keep_on_device=False):
         """Compute correlation with Numba parallelization."""
+        x = _unwrap_device_array(x)
+        y = _unwrap_device_array(y)
         x = np.asarray(x)
         y = np.asarray(y)
         
         if x.ndim == 2 and y.ndim == 2:
-            return self._correlation_impl(x, y)
+            result = self._correlation_impl(x, y)
         else:
             # Fall back to NumPy
             num = np.sum(x * y, axis=0)
             denom = np.sqrt(np.sum(x ** 2, axis=0)) * np.sqrt(np.sum(y ** 2, axis=0))
-            return num / denom
+            result = num / denom
+        
+        if keep_on_device:
+            return DeviceArray(result, self, 'cpu')
+        return result
+    
+    def matmul(self, a, b, keep_on_device=False):
+        """Matrix multiplication using np.matmul."""
+        a = _unwrap_device_array(a)
+        b = _unwrap_device_array(b)
+        result = np.matmul(a, b)
+        if keep_on_device:
+            return DeviceArray(result, self, 'cpu')
+        return result
     
     def to_numpy(self, arr):
         """Return array as-is (already NumPy)."""
+        arr = _unwrap_device_array(arr)
         return np.asarray(arr)
 
 
@@ -564,14 +843,26 @@ class TorchBackend(BaseBackend):
     
     Notes
     -----
-    Data is automatically transferred to/from GPU as needed.
-    For best performance, keep data on GPU between operations.
+    Use `to_device()` to transfer data to GPU once, then use `keep_on_device=True`
+    in operations to avoid CPU↔GPU transfers. Only call `to_numpy()` at the end.
     
     MPS (Apple Silicon) only supports float32, so data is automatically
     converted when using MPS device.
+    
+    Examples
+    --------
+    >>> backend = get_backend(prefer='torch')
+    >>> # Transfer data to GPU once
+    >>> gpu_data = backend.to_device(epochs_data)
+    >>> # All operations stay on GPU
+    >>> ptp_result = backend.ptp(gpu_data, keep_on_device=True)
+    >>> median_result = backend.median(gpu_data, axis=0, keep_on_device=True)
+    >>> # Transfer back only at the end
+    >>> final = backend.to_numpy(median_result)
     """
     
     name = 'torch'
+    supports_gpu = True
     
     def __init__(self):
         """Initialize PyTorch backend."""
@@ -593,31 +884,65 @@ class TorchBackend(BaseBackend):
             self._dtype = torch.float64  # CPU supports float64
     
     def _to_tensor(self, data):
-        """Convert data to PyTorch tensor on device."""
+        """Convert data to PyTorch tensor on device.
+        
+        Handles DeviceArray, numpy arrays, and existing tensors.
+        """
+        # Unwrap DeviceArray
+        if isinstance(data, DeviceArray):
+            data = data._data
+        
+        # Already a tensor on the right device?
         if isinstance(data, self._torch.Tensor):
+            if data.device == self._device and data.dtype == self._dtype:
+                return data
             return data.to(device=self._device, dtype=self._dtype)
+        
+        # Convert from numpy
         arr = np.asarray(data)
         # Convert to appropriate dtype for device
         if self._dtype == self._torch.float32:
             arr = arr.astype(np.float32)
         return self._torch.from_numpy(arr).to(self._device)
     
-    def ptp(self, data, axis=-1):
+    def _maybe_wrap(self, tensor, keep_on_device):
+        """Wrap result in DeviceArray or convert to numpy."""
+        if keep_on_device:
+            return DeviceArray(tensor, self, self.device)
+        return tensor.cpu().numpy()
+    
+    def to_device(self, data):
+        """Transfer data to GPU.
+        
+        Parameters
+        ----------
+        data : array-like or DeviceArray
+            Input data.
+        
+        Returns
+        -------
+        DeviceArray
+            Data on GPU wrapped in DeviceArray.
+        """
+        tensor = self._to_tensor(data)
+        return DeviceArray(tensor, self, self.device)
+    
+    def ptp(self, data, axis=-1, keep_on_device=False):
         """Compute peak-to-peak using PyTorch."""
         t = self._to_tensor(data)
         result = t.max(dim=axis).values - t.min(dim=axis).values
-        return result.cpu().numpy()
+        return self._maybe_wrap(result, keep_on_device)
     
-    def median(self, data, axis=None):
+    def median(self, data, axis=None, keep_on_device=False):
         """Compute median using PyTorch."""
         t = self._to_tensor(data)
         if axis is None:
             result = t.median()
         else:
             result = t.median(dim=axis).values
-        return result.cpu().numpy()
+        return self._maybe_wrap(result, keep_on_device)
     
-    def correlation(self, x, y):
+    def correlation(self, x, y, keep_on_device=False):
         """Compute correlation using PyTorch."""
         tx = self._to_tensor(x)
         ty = self._to_tensor(y)
@@ -626,13 +951,131 @@ class TorchBackend(BaseBackend):
         denom = tx.pow(2).sum(dim=0).sqrt() * ty.pow(2).sum(dim=0).sqrt()
         result = num / denom
         
-        return result.cpu().numpy()
+        return self._maybe_wrap(result, keep_on_device)
+    
+    def matmul(self, a, b, keep_on_device=False):
+        """Matrix multiplication using PyTorch."""
+        ta = self._to_tensor(a)
+        tb = self._to_tensor(b)
+        result = self._torch.matmul(ta, tb)
+        return self._maybe_wrap(result, keep_on_device)
     
     def to_numpy(self, arr):
         """Convert tensor to NumPy array."""
+        # Unwrap DeviceArray
+        if isinstance(arr, DeviceArray):
+            arr = arr._data
+        
         if isinstance(arr, self._torch.Tensor):
             return arr.cpu().numpy()
         return np.asarray(arr)
+    
+    def is_on_device(self, arr):
+        """Check if array is on this backend's GPU."""
+        if isinstance(arr, DeviceArray):
+            return arr.device == self.device
+        if isinstance(arr, self._torch.Tensor):
+            return arr.device.type == self._device.type
+        return False
+    
+    # =========================================================================
+    # Extended GPU operations for data-on-GPU architecture
+    # =========================================================================
+    
+    def zeros(self, shape, keep_on_device=True):
+        """Create zeros array on device."""
+        result = self._torch.zeros(shape, dtype=self._dtype, device=self._device)
+        return self._maybe_wrap(result, keep_on_device)
+    
+    def ones(self, shape, keep_on_device=True):
+        """Create ones array on device."""
+        result = self._torch.ones(shape, dtype=self._dtype, device=self._device)
+        return self._maybe_wrap(result, keep_on_device)
+    
+    def empty(self, shape, keep_on_device=True):
+        """Create uninitialized array on device."""
+        result = self._torch.empty(shape, dtype=self._dtype, device=self._device)
+        return self._maybe_wrap(result, keep_on_device)
+    
+    def sqrt(self, data, keep_on_device=False):
+        """Compute square root."""
+        t = self._to_tensor(data)
+        result = self._torch.sqrt(t)
+        return self._maybe_wrap(result, keep_on_device)
+    
+    def sum(self, data, axis=None, keep_on_device=False):
+        """Compute sum along axis."""
+        t = self._to_tensor(data)
+        if axis is None:
+            result = t.sum()
+        else:
+            result = t.sum(dim=axis)
+        return self._maybe_wrap(result, keep_on_device)
+    
+    def mean(self, data, axis=None, keep_on_device=False):
+        """Compute mean along axis."""
+        t = self._to_tensor(data)
+        if axis is None:
+            result = t.mean()
+        else:
+            result = t.mean(dim=axis)
+        return self._maybe_wrap(result, keep_on_device)
+    
+    def max(self, data, axis=None, keep_on_device=False):
+        """Compute max along axis."""
+        t = self._to_tensor(data)
+        if axis is None:
+            result = t.max()
+        else:
+            result = t.max(dim=axis).values
+        return self._maybe_wrap(result, keep_on_device)
+    
+    def min(self, data, axis=None, keep_on_device=False):
+        """Compute min along axis."""
+        t = self._to_tensor(data)
+        if axis is None:
+            result = t.min()
+        else:
+            result = t.min(dim=axis).values
+        return self._maybe_wrap(result, keep_on_device)
+    
+    def abs(self, data, keep_on_device=False):
+        """Compute absolute value."""
+        t = self._to_tensor(data)
+        result = self._torch.abs(t)
+        return self._maybe_wrap(result, keep_on_device)
+    
+    def where(self, condition, x, y, keep_on_device=False):
+        """Element-wise selection based on condition."""
+        cond = self._to_tensor(condition)
+        tx = self._to_tensor(x)
+        ty = self._to_tensor(y)
+        result = self._torch.where(cond.bool(), tx, ty)
+        return self._maybe_wrap(result, keep_on_device)
+    
+    def concatenate(self, arrays, axis=0, keep_on_device=False):
+        """Concatenate arrays along axis."""
+        tensors = [self._to_tensor(a) for a in arrays]
+        result = self._torch.cat(tensors, dim=axis)
+        return self._maybe_wrap(result, keep_on_device)
+    
+    def stack(self, arrays, axis=0, keep_on_device=False):
+        """Stack arrays along new axis."""
+        tensors = [self._to_tensor(a) for a in arrays]
+        result = self._torch.stack(tensors, dim=axis)
+        return self._maybe_wrap(result, keep_on_device)
+    
+    def argsort(self, data, axis=-1, descending=False, keep_on_device=False):
+        """Return indices that would sort the array."""
+        t = self._to_tensor(data)
+        result = t.argsort(dim=axis, descending=descending)
+        return self._maybe_wrap(result, keep_on_device)
+    
+    def copy(self, data, keep_on_device=True):
+        """Create a copy of the array on device."""
+        t = self._to_tensor(data)
+        result = t.clone()
+        return self._maybe_wrap(result, keep_on_device)
 
 
 # =============================================================================
@@ -649,9 +1092,12 @@ class JaxBackend(BaseBackend):
     -----
     JAX operations are JIT-compiled on first call for each input shape.
     Subsequent calls with the same shape will be much faster.
+    
+    Use `to_device()` and `keep_on_device=True` to keep data on GPU.
     """
     
     name = 'jax'
+    supports_gpu = True
     
     def __init__(self):
         """Initialize JAX backend."""
@@ -665,10 +1111,13 @@ class JaxBackend(BaseBackend):
         devices = jax.devices()
         if devices and devices[0].platform == 'gpu':
             self.device = f'gpu:{devices[0].id}'
+            self._is_gpu = True
         elif devices and devices[0].platform == 'tpu':
             self.device = f'tpu:{devices[0].id}'
+            self._is_gpu = True
         else:
             self.device = 'cpu'
+            self._is_gpu = False
         
         # Create JIT-compiled functions
         self._ptp_jit = jax.jit(self._ptp_impl)
@@ -690,28 +1139,64 @@ class JaxBackend(BaseBackend):
                 self._jnp.sqrt(self._jnp.sum(y ** 2, axis=0))
         return num / denom
     
-    def ptp(self, data, axis=-1):
+    def _to_jax(self, data):
+        """Convert data to JAX array."""
+        if isinstance(data, DeviceArray):
+            data = data._data
+        return self._jnp.asarray(data)
+    
+    def _maybe_wrap(self, arr, keep_on_device):
+        """Wrap result in DeviceArray or convert to numpy."""
+        if keep_on_device:
+            return DeviceArray(arr, self, self.device)
+        return np.asarray(arr)
+    
+    def to_device(self, data):
+        """Transfer data to GPU/TPU."""
+        arr = self._to_jax(data)
+        return DeviceArray(arr, self, self.device)
+    
+    def ptp(self, data, axis=-1, keep_on_device=False):
         """Compute peak-to-peak using JAX."""
-        data = self._jnp.asarray(data)
+        data = self._to_jax(data)
         if axis == -1:
             result = self._ptp_jit(data)
         else:
             result = self._jnp.max(data, axis=axis) - self._jnp.min(data, axis=axis)
-        return np.asarray(result)
+        return self._maybe_wrap(result, keep_on_device)
     
-    def median(self, data, axis=None):
+    def median(self, data, axis=None, keep_on_device=False):
         """Compute median using JAX."""
-        data = self._jnp.asarray(data)
+        data = self._to_jax(data)
         result = self._median_jit(data, axis)
-        return np.asarray(result)
+        return self._maybe_wrap(result, keep_on_device)
     
-    def correlation(self, x, y):
+    def correlation(self, x, y, keep_on_device=False):
         """Compute correlation using JAX."""
-        x = self._jnp.asarray(x)
-        y = self._jnp.asarray(y)
+        x = self._to_jax(x)
+        y = self._to_jax(y)
         result = self._correlation_jit(x, y)
-        return np.asarray(result)
+        return self._maybe_wrap(result, keep_on_device)
+    
+    def matmul(self, a, b, keep_on_device=False):
+        """Matrix multiplication using JAX."""
+        a = self._to_jax(a)
+        b = self._to_jax(b)
+        result = self._jnp.matmul(a, b)
+        return self._maybe_wrap(result, keep_on_device)
     
     def to_numpy(self, arr):
         """Convert JAX array to NumPy."""
+        if isinstance(arr, DeviceArray):
+            arr = arr._data
         return np.asarray(arr)
+    
+    def is_on_device(self, arr):
+        """Check if array is on this backend's device."""
+        if isinstance(arr, DeviceArray):
+            return arr.device == self.device
+        # JAX arrays are always on their device
+        try:
+            return hasattr(arr, 'device') and arr.device().platform in ('gpu', 'tpu')
+        except:
+            return False

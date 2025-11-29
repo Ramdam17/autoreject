@@ -16,6 +16,7 @@
 | 3 | ✅ Complete | CPU parallelization integration |
 | 4 | ✅ Complete | GPU acceleration via PyTorch MPS |
 | 5 | ✅ Complete | Benchmarking scripts |
+| 6 | 🚧 In Progress | **Data-on-GPU architecture** (target: 10-30x speedup) |
 
 ---
 
@@ -133,24 +134,101 @@ Add optional GPU support via PyTorch and JAX.
 
 ---
 
-## Future Work
+## Phase 6: Data-on-GPU Architecture 🚧
 
-### Remaining Optimizations
+**Objective:** Keep data on GPU throughout the entire pipeline, eliminating CPU↔GPU transfer overhead. This is where the real 10-30x speedup comes from.
 
-1. **Keep data on GPU throughout pipeline**
-   - Avoid CPU↔GPU transfers for each operation
-   - Significant gains expected for torch/jax backends
+### Problem Analysis
 
-2. **Add explicit `backend` parameter to AutoReject/Ransac**
-   - Currently uses environment variable
-   - API improvement for explicit control
+Current bottleneck breakdown (from profiling with 100 epochs, 128 channels):
+- **76% in `_compute_thresholds`** → `bayes_opt` → `cross_val_score` → `score()`
+- `score()` calls `np.median` **50,000+ times** (128 channels × ~92 bayes iterations × 10 folds × ~5 splits)
+- Each `np.median` takes ~40ms for realistic data sizes
+- **Total median time: ~33 minutes** for 6000 epochs
 
-3. **Parallel cross-validation folds**
-   - Currently only interpolation is parallel within CV
-   - Could parallelize across folds
+Current GPU backend limitation:
+```python
+# Every operation does CPU→GPU→CPU transfer
+def ptp(self, data, axis=-1):
+    t = self._to_tensor(data)      # CPU→GPU
+    result = t.max(...) - t.min(...)
+    return result.cpu().numpy()     # GPU→CPU ← kills performance
+```
 
-4. **Numba-optimized interpolation matrix computation**
-   - `_make_interpolation_matrix` is a bottleneck
+### Tasks
+
+- [x] **6.1** Extend Backend API for device-resident arrays
+  - Added `keep_on_device=True` parameter to all backend methods (ptp, median, correlation, matmul)
+  - Created `DeviceArray` wrapper class to track tensor location
+  - Modified `TorchBackend` and `JaxBackend` to return native tensors when requested
+  - Added `to_device()` method for explicit GPU transfer
+  - Added `is_on_device()` helper method
+  - Added extended operations to TorchBackend: zeros, ones, empty, sqrt, sum, mean, max, min, abs, where, concatenate, stack, argsort, copy
+  - Added 15 new tests for DeviceArray and keep_on_device API
+  - All 61 tests passing (4 skipped for JAX)
+
+- [ ] **6.2** Rewrite spherical spline interpolation in PyTorch
+  - Implement `_calc_g_gpu()` - Legendre polynomial evaluation on GPU
+  - Implement `_make_interpolation_matrix_gpu()` - spherical splines
+  - Implement `_do_interp_dots_gpu()` - batched matrix multiply
+  - Benchmark against MNE's numpy implementation
+
+- [ ] **6.3** Vectorize `score()` and Bayesian optimization
+  - Rewrite `BaseAutoReject.score()` to use backend.median()
+  - Modify `bayes_opt.py` to batch all threshold evaluations
+  - Replace sklearn `cross_val_score` with GPU-native implementation
+  - Single GPU kernel for all 50,000 median computations
+
+- [ ] **6.4** Create `GPUPipeline` orchestrator
+  - New class in `autoreject/gpu_pipeline.py`
+  - Manages data lifecycle on GPU (load once, compute all, return once)
+  - Handles memory management for large datasets
+  - Automatic fallback to CPU if GPU memory insufficient
+
+- [ ] **6.5** Integrate into `AutoReject.fit()`
+  - Detect when GPU pipeline is available and beneficial
+  - Use `GPUPipeline` for `_compute_thresholds` and `_run_local_reject_cv`
+  - Transparent fallback to current CPU implementation
+  - Add `device` parameter to AutoReject constructor
+
+- [ ] **6.6** Testing and validation
+  - Extend retrocompatibility tests for GPU pipeline
+  - Add memory usage tests
+  - Benchmark with realistic data (2000-6000 epochs)
+
+### Expected Performance Gains
+
+| Component | Current | With GPU Pipeline | Speedup |
+|-----------|---------|-------------------|---------|
+| `score()` median (×50k) | 33 min | ~3 min | **10x** |
+| Interpolation | 5 min | ~1 min | **5x** |
+| Data transfers | ~10 min overhead | ~10 sec | **60x** |
+| **Total for 6000 epochs** | **10+ hours** | **30-60 min** | **10-20x** |
+
+### Memory Considerations
+
+Dataset size estimation:
+- 6000 epochs × 128 channels × 1000 timepoints × 8 bytes = **6.1 GB**
+- Need GPU with ≥8GB VRAM, or implement chunked processing
+- Apple M3 Pro has unified memory (shared CPU/GPU) - advantage here
+
+---
+
+## Future Work (Post Phase 6)
+
+### Further Optimizations
+
+1. **Mixed precision (float16/bfloat16)**
+   - Further memory reduction and speed gains on modern GPUs
+   - Needs numerical stability validation
+
+2. **Multi-GPU support**
+   - Distribute channels across GPUs
+   - For very large datasets or cluster computing
+
+3. **Streaming/chunked processing**
+   - Process epochs in chunks for memory-limited GPUs
+   - Enable processing of arbitrarily large datasets
 
 ### CI/CD Updates
 
