@@ -1245,9 +1245,9 @@ class AutoReject:
             
             # Use GPU-accelerated CV if available
             if use_gpu:
-                from .gpu_pipeline import run_local_reject_cv_gpu
+                from .gpu_pipeline import run_local_reject_cv_gpu_batch
                 this_local_reject, this_loss = \
-                    run_local_reject_cv_gpu(epochs, thresh_func, this_picks,
+                    run_local_reject_cv_gpu_batch(epochs, thresh_func, this_picks,
                                             self.n_interpolate, self.cv_,
                                             self.consensus, self.dots,
                                             self.verbose, n_jobs=self.n_jobs,

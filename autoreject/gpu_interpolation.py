@@ -18,8 +18,40 @@ __all__ = [
     'gpu_do_interp_dots',
     'gpu_interpolate_bads_eeg',
     'gpu_interpolate_bad_epochs',
+    'gpu_batch_interpolate_all_n_interp',
     'legval_torch',
+    'is_cuda_device',
 ]
+
+
+def is_cuda_device(device):
+    """Check if device is CUDA (not MPS or CPU).
+    
+    This is used to determine compute strategy:
+    - CUDA: float64 on device for all operations (bit-exact with CPU)
+    - MPS: float64 on CPU for matrix computation, float32 for matmul
+    - CPU: float64 everywhere
+    
+    Parameters
+    ----------
+    device : str or torch.device
+        Device to check.
+        
+    Returns
+    -------
+    bool
+        True if device is CUDA.
+    """
+    import torch
+    
+    if device is None:
+        return False
+    
+    if isinstance(device, torch.device):
+        return device.type == 'cuda'
+    
+    device_str = str(device).lower()
+    return device_str.startswith('cuda')
 
 
 def legval_torch(x, c):
@@ -163,10 +195,22 @@ def gpu_make_interpolation_matrix(pos_from, pos_to, alpha=1e-5, device=None):
     if device is None:
         device = backend.device
     
-    # Use CPU and float64 for matrix inversion (numerical stability)
-    # This matches MNE's behavior exactly
-    compute_device = 'cpu'  # pinv on MPS falls back to CPU anyway
-    compute_dtype = torch.float64
+    # Determine compute strategy based on device type
+    # CUDA: float64 on device for everything (bit-exact with CPU)
+    # MPS: float64 on CPU for pinv (MPS pinv falls back to CPU anyway), float32 for matmul
+    # CPU: float64 everywhere
+    use_cuda = is_cuda_device(device)
+    
+    if use_cuda:
+        # CUDA: everything in float64 on device
+        compute_device = device
+        compute_dtype = torch.float64
+        output_dtype = torch.float64
+    else:
+        # MPS or CPU: compute on CPU in float64, output float32 for MPS matmul
+        compute_device = 'cpu'
+        compute_dtype = torch.float64
+        output_dtype = torch.float32 if device == 'mps' else torch.float64
     
     # Convert to torch tensors (float64 for precision)
     if isinstance(pos_from, np.ndarray):
@@ -209,7 +253,7 @@ def gpu_make_interpolation_matrix(pos_from, pos_to, alpha=1e-5, device=None):
         torch.cat([ones_row, zero], dim=1)
     ], dim=0)
     
-    # Pseudo-inverse (computed on CPU with float64 for numerical stability)
+    # Pseudo-inverse (computed in float64 for numerical stability)
     C_inv = torch.linalg.pinv(C)
     
     # Compute interpolation matrix
@@ -219,8 +263,10 @@ def gpu_make_interpolation_matrix(pos_from, pos_to, alpha=1e-5, device=None):
     
     assert interpolation.shape == (n_to, n_from)
     
-    # Convert to float32 and move to target device for efficient GPU compute
-    interpolation = interpolation.to(device=device, dtype=torch.float32)
+    # Move to target device with appropriate dtype
+    # CUDA: keep float64 for bit-exact results
+    # MPS: convert to float32 for efficient matmul
+    interpolation = interpolation.to(device=device, dtype=output_dtype)
     
     return DeviceArray(interpolation, backend='torch', device=str(device))
 
@@ -421,13 +467,29 @@ def gpu_clean_by_interp(inst, picks=None, device=None, verbose=True):
     BaseEpochs = _get_epochs_type()
     ch_names = [inst.info['ch_names'][p] for p in picks]
     
-    # Transfer data to GPU once
-    data_gpu = torch.tensor(inst._data, dtype=torch.float32, device=device)
+    # Determine compute strategy based on device type
+    # CUDA: float64 on device for everything (bit-exact with CPU)
+    # MPS: float64 on CPU for pinv, float32 for data matmul
+    use_cuda = is_cuda_device(device)
+    
+    if use_cuda:
+        # CUDA: everything in float64 on device
+        compute_device = device
+        compute_dtype = torch.float64
+        data_dtype = torch.float64
+    else:
+        # MPS or CPU: compute on CPU in float64, data in float32 for MPS
+        compute_device = 'cpu'
+        compute_dtype = torch.float64
+        data_dtype = torch.float32 if device == 'mps' else torch.float64
+    
+    # Transfer data to GPU once with appropriate dtype
+    data_gpu = torch.tensor(inst._data, dtype=data_dtype, device=device)
     result_gpu = data_gpu.clone()
     
     # Pre-compute positions and normalize once
     pos_all = inst._get_channel_positions(picks)
-    pos_all_t = torch.tensor(pos_all, dtype=torch.float32, device=device)
+    pos_all_t = torch.tensor(pos_all, dtype=compute_dtype, device=compute_device)
     pos_all_t = _normalize_vectors_torch(pos_all_t)
     
     # Pre-compute G matrix for all positions
@@ -455,12 +517,12 @@ def gpu_clean_by_interp(inst, picks=None, device=None, verbose=True):
         # Add regularization
         alpha = 1e-5
         n_from = G_from.shape[0]
-        G_from_reg = G_from + alpha * torch.eye(n_from, device=device, dtype=torch.float32)
+        G_from_reg = G_from + alpha * torch.eye(n_from, device=compute_device, dtype=compute_dtype)
         
         # Build C matrix and compute pseudo-inverse
-        ones_col = torch.ones((n_from, 1), device=device, dtype=torch.float32)
-        ones_row = torch.ones((1, n_from), device=device, dtype=torch.float32)
-        zero = torch.zeros((1, 1), device=device, dtype=torch.float32)
+        ones_col = torch.ones((n_from, 1), device=compute_device, dtype=compute_dtype)
+        ones_row = torch.ones((1, n_from), device=compute_device, dtype=compute_dtype)
+        zero = torch.zeros((1, 1), device=compute_device, dtype=compute_dtype)
         
         C = torch.cat([
             torch.cat([G_from_reg, ones_col], dim=1),
@@ -469,9 +531,11 @@ def gpu_clean_by_interp(inst, picks=None, device=None, verbose=True):
         
         C_inv = torch.linalg.pinv(C)
         
-        # Compute interpolation (1, n_good)
-        ones_to = torch.ones((1, 1), device=device, dtype=torch.float32)
+        # Compute interpolation matrix
+        ones_to = torch.ones((1, 1), device=compute_device, dtype=compute_dtype)
         interpolation = torch.cat([G_to_from, ones_to], dim=1) @ C_inv[:, :-1]
+        # Move to target device with appropriate dtype
+        interpolation = interpolation.to(device=device, dtype=data_dtype)
         
         # Get picks for good channels in the original data
         good_picks = picks[pos_good_idx]
@@ -595,6 +659,173 @@ def benchmark_interpolation_gpu(n_epochs=100, n_channels=64, n_times=1000, n_ite
     }
 
 
+def gpu_batch_interpolate_all_n_interp(epochs, labels_list, picks, pos, device=None, verbose=True):
+    """Batch interpolation for ALL n_interpolate values at once.
+    
+    This is the key optimization: instead of interpolating sequentially
+    for each n_interpolate value, we do them ALL in parallel on GPU.
+    
+    Parameters
+    ----------
+    epochs : mne.Epochs
+        The epochs to interpolate.
+    labels_list : list of np.ndarray
+        List of label arrays, one per n_interpolate value.
+        Each array has shape (n_epochs, n_channels).
+        Label values: 0=good, 1=bad, 2=to interpolate.
+    picks : np.ndarray
+        Channel indices that were picked.
+    pos : np.ndarray, shape (n_picks, 3)
+        3D positions of picked channels (will be normalized internally).
+    device : str or torch.device, optional
+        Device to run on.
+    verbose : bool
+        Whether to show progress.
+        
+    Returns
+    -------
+    list of torch.Tensor
+        List of interpolated data tensors (one per n_interpolate value),
+        each with shape (n_epochs, len(picks), n_times).
+    """
+    import torch
+    from .utils import _pbar, _GDKW
+    
+    backend = get_backend()
+    if backend.name != 'torch':
+        raise RuntimeError("gpu_batch_interpolate_all_n_interp requires torch backend")
+    
+    if device is None:
+        device = backend.device
+    
+    n_interp_values = len(labels_list)
+    n_epochs = len(epochs)
+    n_picks = len(picks)
+    picks = np.asarray(picks)
+    
+    # Determine compute strategy based on device type
+    # CUDA: float64 on device for everything (bit-exact with CPU)
+    # MPS: float64 on CPU for pinv, float32 for data matmul
+    use_cuda = is_cuda_device(device)
+    
+    if use_cuda:
+        # CUDA: everything in float64 on device
+        compute_device = device
+        compute_dtype = torch.float64
+        data_dtype = torch.float64
+    else:
+        # MPS or CPU: compute on CPU in float64, data in float32 for MPS
+        compute_device = 'cpu'
+        compute_dtype = torch.float64
+        data_dtype = torch.float32 if device == 'mps' else torch.float64
+    
+    # Get original data and transfer to GPU once
+    from .autoreject import _GDKW
+    X_full = epochs.get_data(**_GDKW)
+    n_times = X_full.shape[2]
+    
+    X_gpu = torch.tensor(X_full, dtype=data_dtype, device=device)
+    
+    # Normalize positions to unit sphere (in float64 for precision)
+    pos_t = torch.tensor(pos, dtype=compute_dtype, device=compute_device)
+    norms = torch.norm(pos_t, dim=1, keepdim=True)
+    pos_t = pos_t / norms
+    
+    # Pre-compute full G matrix for all positions (n_picks x n_picks) in float64
+    cosang_all = pos_t @ pos_t.T
+    G_all = _calc_g_torch(cosang_all)
+    
+    # Prepare all interp_channels lists (convert labels to channel indices)
+    all_interp_ch_indices = []
+    ch_names = epochs.ch_names
+    
+    for labels in labels_list:
+        interp_channels = []
+        for epoch_idx in range(n_epochs):
+            # Find channels marked for interpolation (label == 2)
+            to_interp_mask = labels[epoch_idx, picks] == 2
+            ch_indices_in_picks = np.where(to_interp_mask)[0].tolist()
+            interp_channels.append(ch_indices_in_picks)
+        all_interp_ch_indices.append(interp_channels)
+    
+    # Cache interpolation matrices (shared across n_interp values if same pattern)
+    interp_cache = {}
+    
+    # Process all n_interp values
+    results = []
+    
+    desc = 'Batch interpolating all n_interp values'
+    for interp_idx, interp_channels in enumerate(_pbar(all_interp_ch_indices, 
+                                                        desc=desc, 
+                                                        verbose=verbose)):
+        # Clone the GPU data for this n_interp value
+        data_gpu = X_gpu[:, picks, :].clone()
+        
+        for epoch_idx, bad_ch_indices in enumerate(interp_channels):
+            if len(bad_ch_indices) == 0:
+                continue
+            
+            # Create cache key from bad channel pattern
+            cache_key = tuple(sorted(bad_ch_indices))
+            
+            if cache_key not in interp_cache:
+                # Create masks for good/bad channels
+                goods_mask = np.ones(n_picks, dtype=bool)
+                for bad_idx in bad_ch_indices:
+                    goods_mask[bad_idx] = False
+                bads_mask = ~goods_mask
+                
+                # Get indices of good and bad channels within picks
+                good_idx_in_picks = np.where(goods_mask)[0]
+                bad_idx_in_picks = np.where(bads_mask)[0]
+                
+                # Create torch index tensors for operations on G matrix
+                good_idx_t = torch.tensor(good_idx_in_picks, device=compute_device, dtype=torch.long)
+                bad_idx_t = torch.tensor(bad_idx_in_picks, device=compute_device, dtype=torch.long)
+                
+                # Extract submatrices from pre-computed G using advanced indexing
+                G_from = G_all[good_idx_t][:, good_idx_t]
+                G_to_from = G_all[bad_idx_t][:, good_idx_t]
+                
+                # Add regularization
+                n_from = len(good_idx_in_picks)
+                G_from_reg = G_from + 1e-5 * torch.eye(n_from, device=compute_device, dtype=compute_dtype)
+                
+                # Build C matrix and compute pseudo-inverse
+                ones_col = torch.ones((n_from, 1), device=compute_device, dtype=compute_dtype)
+                ones_row = torch.ones((1, n_from), device=compute_device, dtype=compute_dtype)
+                zero = torch.zeros((1, 1), device=compute_device, dtype=compute_dtype)
+                
+                C = torch.cat([
+                    torch.cat([G_from_reg, ones_col], dim=1),
+                    torch.cat([ones_row, zero], dim=1)
+                ], dim=0)
+                
+                C_inv = torch.linalg.pinv(C)
+                
+                # Compute interpolation matrix (n_bad, n_good)
+                n_bad = len(bad_idx_in_picks)
+                ones_to = torch.ones((n_bad, 1), device=compute_device, dtype=compute_dtype)
+                interpolation = torch.cat([G_to_from, ones_to], dim=1) @ C_inv[:, :-1]
+                
+                # Move to target device with appropriate dtype
+                interpolation = interpolation.to(device=device, dtype=data_dtype)
+                
+                interp_cache[cache_key] = (interpolation, good_idx_in_picks, bad_idx_in_picks)
+            
+            interpolation, good_idx, bad_idx = interp_cache[cache_key]
+            
+            # Apply interpolation for this epoch
+            # (n_bad, n_good) @ (n_good, n_times) -> (n_bad, n_times)
+            good_data = data_gpu[epoch_idx, good_idx, :]
+            interpolated = interpolation @ good_data
+            data_gpu[epoch_idx, bad_idx, :] = interpolated
+        
+        results.append(data_gpu)
+    
+    return results
+
+
 def gpu_interpolate_bad_epochs(data, interp_channels, picks, pos, device=None):
     """GPU-accelerated interpolation for epochs with per-epoch bad channels.
     
@@ -632,14 +863,30 @@ def gpu_interpolate_bad_epochs(data, interp_channels, picks, pos, device=None):
     n_picks = len(picks)
     picks = np.asarray(picks)  # Ensure picks is numpy array
     
-    # Transfer data to GPU once
-    if isinstance(data, torch.Tensor):
-        data_gpu = data.clone()
+    # Determine compute strategy based on device type
+    # CUDA: float64 on device for everything (bit-exact with CPU)
+    # MPS: float64 on CPU for pinv, float32 for data matmul
+    use_cuda = is_cuda_device(device)
+    
+    if use_cuda:
+        # CUDA: everything in float64 on device
+        compute_device = device
+        compute_dtype = torch.float64
+        data_dtype = torch.float64
     else:
-        data_gpu = torch.tensor(data, dtype=torch.float32, device=device)
+        # MPS or CPU: compute on CPU in float64, data in float32 for MPS
+        compute_device = 'cpu'
+        compute_dtype = torch.float64
+        data_dtype = torch.float32 if device == 'mps' else torch.float64
+    
+    # Transfer data to GPU once with appropriate dtype
+    if isinstance(data, torch.Tensor):
+        data_gpu = data.clone().to(dtype=data_dtype)
+    else:
+        data_gpu = torch.tensor(data, dtype=data_dtype, device=device)
     
     # Pre-compute positions tensor
-    pos_t = torch.tensor(pos, dtype=torch.float32, device=device)
+    pos_t = torch.tensor(pos, dtype=compute_dtype, device=compute_device)
     
     # Pre-compute full G matrix for all positions (n_picks x n_picks)
     cosang_all = pos_t @ pos_t.T
@@ -666,9 +913,9 @@ def gpu_interpolate_bad_epochs(data, interp_channels, picks, pos, device=None):
             good_idx_in_picks = np.where(goods_mask)[0]
             bad_idx_in_picks = np.where(bads_mask)[0]
             
-            # Create torch index tensors for GPU operations on G matrix
-            good_idx_t = torch.tensor(good_idx_in_picks, device=device, dtype=torch.long)
-            bad_idx_t = torch.tensor(bad_idx_in_picks, device=device, dtype=torch.long)
+            # Create torch index tensors for operations on G matrix
+            good_idx_t = torch.tensor(good_idx_in_picks, device=compute_device, dtype=torch.long)
+            bad_idx_t = torch.tensor(bad_idx_in_picks, device=compute_device, dtype=torch.long)
             
             # Extract submatrices from pre-computed G using advanced indexing
             G_from = G_all[good_idx_t][:, good_idx_t]
@@ -676,12 +923,12 @@ def gpu_interpolate_bad_epochs(data, interp_channels, picks, pos, device=None):
             
             # Add regularization
             n_from = len(good_idx_in_picks)
-            G_from_reg = G_from + 1e-5 * torch.eye(n_from, device=device, dtype=torch.float32)
+            G_from_reg = G_from + 1e-5 * torch.eye(n_from, device=compute_device, dtype=compute_dtype)
             
             # Build C matrix and compute pseudo-inverse
-            ones_col = torch.ones((n_from, 1), device=device, dtype=torch.float32)
-            ones_row = torch.ones((1, n_from), device=device, dtype=torch.float32)
-            zero = torch.zeros((1, 1), device=device, dtype=torch.float32)
+            ones_col = torch.ones((n_from, 1), device=compute_device, dtype=compute_dtype)
+            ones_row = torch.ones((1, n_from), device=compute_device, dtype=compute_dtype)
+            zero = torch.zeros((1, 1), device=compute_device, dtype=compute_dtype)
             
             C = torch.cat([
                 torch.cat([G_from_reg, ones_col], dim=1),
@@ -692,8 +939,11 @@ def gpu_interpolate_bad_epochs(data, interp_channels, picks, pos, device=None):
             
             # Compute interpolation matrix (n_bad, n_good)
             n_bad = len(bad_idx_in_picks)
-            ones_to = torch.ones((n_bad, 1), device=device, dtype=torch.float32)
+            ones_to = torch.ones((n_bad, 1), device=compute_device, dtype=compute_dtype)
             interpolation = torch.cat([G_to_from, ones_to], dim=1) @ C_inv[:, :-1]
+            
+            # Move to target device with appropriate dtype
+            interpolation = interpolation.to(device=device, dtype=data_dtype)
             
             # Store original picks for good and bad channels (in full data indexing)
             good_picks = picks[goods_mask]
