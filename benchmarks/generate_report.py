@@ -40,22 +40,23 @@ def extract_metrics(results):
     for r in results:
         try:
             config = r.get("config", {})
-            cpu_time = r.get("cpu", {}).get("elapsed_time", 0)
-            gpu_time = r.get("gpu", {}).get("elapsed_time", 0)
+            data_info = r.get("data_info", {})
+            cpu_time = r.get("cpu", {}).get("time_seconds", 0)
+            gpu_time = r.get("gpu", {}).get("time_seconds", 0)
             
             if cpu_time > 0 and gpu_time > 0:
                 metrics.append({
-                    "name": config.get("name", r["_filename"]),
-                    "n_channels": config.get("n_channels", 0),
-                    "n_epochs": config.get("n_epochs", 0),
+                    "name": config.get("name", r.get("name", r["_filename"])),
+                    "n_channels": data_info.get("n_channels", config.get("channels", 0)),
+                    "n_epochs": data_info.get("n_epochs", 0),
                     "sfreq": config.get("sfreq", 0),
-                    "n_cv": config.get("n_cv", 0),
+                    "n_cv": config.get("cv_folds", 0),
                     "cpu_time": cpu_time,
                     "gpu_time": gpu_time,
-                    "speedup": cpu_time / gpu_time,
-                    "cpu_memory_mb": r.get("cpu", {}).get("peak_memory_mb", 0),
-                    "gpu_memory_mb": r.get("gpu", {}).get("peak_memory_mb", 0),
-                    "outputs_match": r.get("verification", {}).get("outputs_match", False),
+                    "speedup": r.get("comparison", {}).get("speedup", cpu_time / gpu_time),
+                    "cpu_memory_mb": r.get("cpu", {}).get("memory_peak_mb", 0),
+                    "gpu_memory_mb": r.get("gpu", {}).get("memory_peak_mb", 0),
+                    "outputs_match": r.get("comparison", {}).get("results_match", False),
                     "timestamp": r.get("timestamp", ""),
                 })
         except Exception as e:
