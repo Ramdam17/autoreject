@@ -35,26 +35,51 @@ def get_existing_results(results_dir):
     return {f.stem for f in results_dir.glob("*.json")}
 
 
-def run_single_config(config_name, script_path, overwrite=False):
+def run_single_config(config_name, script_path, overwrite=False, stream_output=True):
     """Run a single benchmark configuration."""
     cmd = [sys.executable, str(script_path), "--config", config_name]
     if overwrite:
         cmd.append("--overwrite")
     
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=3600 * 2,  # 2 hour timeout
-        )
-        return {
-            "name": config_name,
-            "success": result.returncode == 0,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "returncode": result.returncode,
-        }
+        if stream_output:
+            # Stream output in real-time
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            
+            output_lines = []
+            for line in process.stdout:
+                print(line, end='', flush=True)
+                output_lines.append(line)
+            
+            process.wait()
+            
+            return {
+                "name": config_name,
+                "success": process.returncode == 0,
+                "stdout": ''.join(output_lines),
+                "returncode": process.returncode,
+            }
+        else:
+            # Capture output (for parallel execution)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=3600 * 2,  # 2 hour timeout
+            )
+            return {
+                "name": config_name,
+                "success": result.returncode == 0,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "returncode": result.returncode,
+            }
     except subprocess.TimeoutExpired:
         return {
             "name": config_name,

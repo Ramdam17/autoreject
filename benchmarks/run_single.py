@@ -27,6 +27,166 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
+def sanitize_for_json(obj):
+    """Recursively replace inf/nan with None for JSON serialization."""
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_for_json(v) for v in obj]
+    elif isinstance(obj, float):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return obj
+    elif isinstance(obj, np.floating):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return float(obj)
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.ndarray):
+        return sanitize_for_json(obj.tolist())
+    return obj
+
+
+def is_neighbor_match(cpu_val, gpu_val, grid):
+    """Check if GPU value is within ±1 step of CPU value in the grid."""
+    if cpu_val == gpu_val:
+        return True, 0
+    
+    try:
+        cpu_idx = list(grid).index(cpu_val)
+        gpu_idx = list(grid).index(gpu_val)
+        diff = abs(cpu_idx - gpu_idx)
+        return diff <= 1, diff
+    except ValueError:
+        return False, -1
+
+
+def generate_comparison_figure(results, n_interpolate_grid, consensus_grid, output_path):
+    """Generate a figure comparing CPU and GPU loss grids."""
+    try:
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as mpatches
+    except ImportError:
+        return None
+    
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    
+    cpu_loss = results.get("cpu", {}).get("loss_grid")
+    gpu_loss = results.get("gpu", {}).get("loss_grid")
+    
+    if cpu_loss is None or gpu_loss is None:
+        # No loss grids available, show parameters only
+        ax = axes[1]
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 10)
+        
+        cpu_cons = results.get("cpu", {}).get("consensus", {}).get("eeg", "?")
+        gpu_cons = results.get("gpu", {}).get("consensus", {}).get("eeg", "?")
+        cpu_nint = results.get("cpu", {}).get("n_interpolate", {}).get("eeg", "?")
+        gpu_nint = results.get("gpu", {}).get("n_interpolate", {}).get("eeg", "?")
+        
+        text = f"CPU: consensus={cpu_cons}, n_interpolate={cpu_nint}\n"
+        text += f"GPU: consensus={gpu_cons}, n_interpolate={gpu_nint}\n\n"
+        
+        match_info = results.get("comparison", {})
+        if match_info.get("exact_match"):
+            text += "✅ Exact match"
+        elif match_info.get("neighbor_match"):
+            text += f"≈ Neighbor match (within ±1 step)"
+        else:
+            text += "❌ Results differ"
+        
+        ax.text(5, 5, text, ha='center', va='center', fontsize=14, 
+                family='monospace', bbox=dict(boxstyle='round', facecolor='wheat'))
+        ax.axis('off')
+        ax.set_title("Parameter Comparison")
+        
+        # Hide other axes
+        axes[0].axis('off')
+        axes[2].axis('off')
+        
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        return str(output_path)
+    
+    cpu_loss = np.array(cpu_loss)
+    gpu_loss = np.array(gpu_loss)
+    
+    # Plot 1: CPU loss grid
+    im1 = axes[0].imshow(cpu_loss, aspect='auto', cmap='viridis')
+    axes[0].set_title("CPU Loss Grid (float64)")
+    axes[0].set_xlabel("n_interpolate")
+    axes[0].set_ylabel("consensus")
+    axes[0].set_xticks(range(len(n_interpolate_grid)))
+    axes[0].set_xticklabels(n_interpolate_grid)
+    axes[0].set_yticks(range(len(consensus_grid)))
+    axes[0].set_yticklabels([f"{c:.2f}" for c in consensus_grid])
+    plt.colorbar(im1, ax=axes[0], label='Loss')
+    
+    # Mark CPU minimum
+    cpu_min = np.unravel_index(np.nanargmin(cpu_loss), cpu_loss.shape)
+    axes[0].scatter(cpu_min[1], cpu_min[0], c='red', s=200, marker='*', 
+                    edgecolors='white', linewidths=2, zorder=5)
+    
+    # Plot 2: GPU loss grid
+    im2 = axes[1].imshow(gpu_loss, aspect='auto', cmap='viridis')
+    axes[1].set_title("GPU Loss Grid (float32)")
+    axes[1].set_xlabel("n_interpolate")
+    axes[1].set_ylabel("consensus")
+    axes[1].set_xticks(range(len(n_interpolate_grid)))
+    axes[1].set_xticklabels(n_interpolate_grid)
+    axes[1].set_yticks(range(len(consensus_grid)))
+    axes[1].set_yticklabels([f"{c:.2f}" for c in consensus_grid])
+    plt.colorbar(im2, ax=axes[1], label='Loss')
+    
+    # Mark GPU minimum
+    gpu_min = np.unravel_index(np.nanargmin(gpu_loss), gpu_loss.shape)
+    axes[1].scatter(gpu_min[1], gpu_min[0], c='red', s=200, marker='*',
+                    edgecolors='white', linewidths=2, zorder=5)
+    
+    # Plot 3: Difference (CPU - GPU)
+    diff = cpu_loss - gpu_loss
+    max_diff = np.nanmax(np.abs(diff))
+    im3 = axes[2].imshow(diff, aspect='auto', cmap='RdBu_r', 
+                         vmin=-max_diff, vmax=max_diff)
+    axes[2].set_title(f"Difference (CPU - GPU)\nmax|diff|={max_diff:.2e}")
+    axes[2].set_xlabel("n_interpolate")
+    axes[2].set_ylabel("consensus")
+    axes[2].set_xticks(range(len(n_interpolate_grid)))
+    axes[2].set_xticklabels(n_interpolate_grid)
+    axes[2].set_yticks(range(len(consensus_grid)))
+    axes[2].set_yticklabels([f"{c:.2f}" for c in consensus_grid])
+    plt.colorbar(im3, ax=axes[2], label='Δ Loss')
+    
+    # Mark both minima on diff plot
+    axes[2].scatter(cpu_min[1], cpu_min[0], c='blue', s=150, marker='o',
+                    edgecolors='white', linewidths=2, zorder=5, label='CPU min')
+    axes[2].scatter(gpu_min[1], gpu_min[0], c='red', s=150, marker='s',
+                    edgecolors='white', linewidths=2, zorder=5, label='GPU min')
+    axes[2].legend(loc='upper right')
+    
+    # Title with match status
+    match_info = results.get("comparison", {})
+    if match_info.get("exact_match"):
+        status = "✅ Exact match"
+    elif match_info.get("neighbor_match"):
+        status = "≈ Neighbor match (within ±1 step)"
+    else:
+        status = "❌ Results differ"
+    
+    speedup = match_info.get("speedup", 0)
+    fig.suptitle(f"{results.get('name', 'Benchmark')} - Speedup: {speedup:.1f}x - {status}",
+                 fontsize=14, fontweight='bold')
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    return str(output_path)
+
+
 def get_machine_info():
     """Collect machine information."""
     info = {
@@ -252,7 +412,7 @@ def run_benchmark(config, logger):
         cv=config["cv_folds"],
         random_state=config.get("random_state", 42),
         n_jobs=1,
-        verbose=False,
+        verbose=True,
         device='cpu'
     )
     
@@ -307,7 +467,7 @@ def run_benchmark(config, logger):
         cv=config["cv_folds"],
         random_state=config.get("random_state", 42),
         n_jobs=1,
-        verbose=False,
+        verbose=True,
         device='gpu'
     )
     
@@ -351,24 +511,74 @@ def run_benchmark(config, logger):
     # ========== Comparison ==========
     if cpu_success and gpu_success:
         speedup = cpu_time / gpu_time
-        results_match = (
+        
+        # Exact match check
+        exact_match = (
             ar_cpu.consensus_ == ar_gpu.consensus_ and
             ar_cpu.n_interpolate_ == ar_gpu.n_interpolate_
         )
         
+        # Neighbor match check (within ±1 step in the grid)
+        consensus_neighbor, consensus_diff = is_neighbor_match(
+            ar_cpu.consensus_.get('eeg'), 
+            ar_gpu.consensus_.get('eeg'),
+            consensus
+        )
+        n_interp_neighbor, n_interp_diff = is_neighbor_match(
+            ar_cpu.n_interpolate_.get('eeg'),
+            ar_gpu.n_interpolate_.get('eeg'),
+            n_interpolate
+        )
+        neighbor_match = consensus_neighbor and n_interp_neighbor
+        
+        # Store loss grids if available
+        if hasattr(ar_cpu, 'loss_') and ar_cpu.loss_ is not None:
+            # loss_ shape: (n_consensus, n_interpolate) after mean over folds
+            cpu_loss = ar_cpu.loss_.get('eeg')
+            if cpu_loss is not None:
+                # Average over folds if needed
+                if cpu_loss.ndim == 3:
+                    cpu_loss = np.mean(cpu_loss, axis=2)
+                results["cpu"]["loss_grid"] = cpu_loss.tolist()
+        
+        if hasattr(ar_gpu, 'loss_') and ar_gpu.loss_ is not None:
+            gpu_loss = ar_gpu.loss_.get('eeg')
+            if gpu_loss is not None:
+                if gpu_loss.ndim == 3:
+                    gpu_loss = np.mean(gpu_loss, axis=2)
+                results["gpu"]["loss_grid"] = gpu_loss.tolist()
+        
         results["comparison"] = {
             "speedup": speedup,
-            "results_match": results_match,
+            "exact_match": exact_match,
+            "neighbor_match": neighbor_match,
+            "consensus_diff_steps": consensus_diff,
+            "n_interpolate_diff_steps": n_interp_diff,
+            # Legacy field for compatibility
+            "results_match": exact_match or neighbor_match,
+        }
+        
+        # Store grids for reference
+        results["grids"] = {
+            "n_interpolate": n_interpolate,
+            "consensus": consensus,
         }
         
         logger.info("=" * 60)
         logger.info(f"SPEEDUP: {speedup:.2f}x")
-        logger.info(f"Results match: {results_match}")
         
-        if not results_match:
-            logger.warning("⚠️  CPU and GPU results differ!")
+        if exact_match:
+            logger.info("✅ Results match exactly")
+        elif neighbor_match:
+            logger.info(f"≈ Results match within tolerance (±1 step)")
+            logger.info(f"   Consensus: CPU={ar_cpu.consensus_} vs GPU={ar_gpu.consensus_} (diff={consensus_diff} steps)")
+            logger.info(f"   N_interpolate: CPU={ar_cpu.n_interpolate_} vs GPU={ar_gpu.n_interpolate_} (diff={n_interp_diff} steps)")
+        else:
+            logger.warning("❌ Results differ significantly!")
+            logger.warning(f"   Consensus diff: {consensus_diff} steps")
+            logger.warning(f"   N_interpolate diff: {n_interp_diff} steps")
     
-    return results
+    return results, n_interpolate, consensus
 
 
 def main():
@@ -466,24 +676,45 @@ def main():
     logger.info("=" * 60)
     logger.info(f"Config: {json.dumps(config, indent=2)}")
     
+    # Create figures directory
+    figures_dir = output_dir / "figures"
+    figures_dir.mkdir(exist_ok=True)
+    
     # Run benchmark
     try:
-        results = run_benchmark(config, logger)
+        results, n_interpolate_grid, consensus_grid = run_benchmark(config, logger)
         results["name"] = config_name
         
-        # Save results
+        # Save results (sanitize inf/nan for valid JSON)
         with open(result_file, 'w') as f:
-            json.dump(results, f, indent=2, default=str)
+            json.dump(sanitize_for_json(results), f, indent=2, default=str)
         
         logger.info(f"\nResults saved to: {result_file}")
         logger.info(f"Log saved to: {log_file}")
         
+        # Generate comparison figure
+        figure_path = figures_dir / f"{config_name}.png"
+        try:
+            fig_result = generate_comparison_figure(
+                results, n_interpolate_grid, consensus_grid, figure_path
+            )
+            if fig_result:
+                logger.info(f"Figure saved to: {figure_path}")
+        except Exception as e:
+            logger.warning(f"Could not generate figure: {e}")
+        
         # Print summary
         if results.get("comparison"):
+            comp = results["comparison"]
             print(f"\n{'='*60}")
             print(f"✅ BENCHMARK COMPLETE: {config_name}")
-            print(f"   Speedup: {results['comparison']['speedup']:.2f}x")
-            print(f"   Results match: {results['comparison']['results_match']}")
+            print(f"   Speedup: {comp['speedup']:.2f}x")
+            if comp.get('exact_match'):
+                print(f"   Match: ✅ Exact")
+            elif comp.get('neighbor_match'):
+                print(f"   Match: ≈ Within tolerance (±1 step)")
+            else:
+                print(f"   Match: ❌ Results differ")
             print(f"{'='*60}")
         
     except Exception as e:

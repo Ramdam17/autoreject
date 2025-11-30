@@ -1,0 +1,891 @@
+============================================================
+BENCHMARK ORCHESTRATOR
+============================================================
+Total configurations: 13
+Already completed: 0
+To run: 13
+
+Will run: small_fast, standard_64ch, highdensity_128ch, ultrahd_256ch, scaling_32ch, scaling_64ch, scaling_128ch, scaling_256ch, duration_5min, duration_10min, duration_20min, clean_10pct, noisy_30pct
+
+Starting 13 benchmarks...
+============================================================
+
+[1/13] Running small_fast...
+2025-11-30 02:23:35,369 - INFO - ============================================================
+2025-11-30 02:23:35,369 - INFO - BENCHMARK: small_fast
+2025-11-30 02:23:35,369 - INFO - ============================================================
+2025-11-30 02:23:35,369 - INFO - Config: {
+  "name": "small_fast",
+  "channels": 32,
+  "sfreq": 250,
+  "epoch_duration": 1.0,
+  "recording_duration": 5,
+  "cv_folds": 5,
+  "n_interpolate": "light",
+  "consensus": "light",
+  "artifact_pct": 0.3
+}
+2025-11-30 02:23:36,735 - INFO - Creating synthetic data...
+2025-11-30 02:23:36,769 - INFO -   Created 300 epochs × 32 channels
+2025-11-30 02:23:36,769 - INFO -   Data size: 19.2 MB
+2025-11-30 02:23:36,769 - INFO - ============================================================
+2025-11-30 02:23:36,769 - INFO - Running CPU benchmark...
+Running autoreject on ch_type=eeg
+
+
+
+
+Estimated consensus=0.50 and n_interpolate=4
+2025-11-30 02:24:14,428 - INFO -   CPU time: 37.66s
+2025-11-30 02:24:14,429 - INFO -   CPU memory peak: 79.7 MB
+2025-11-30 02:24:14,429 - INFO -   Results: consensus={'eeg': 0.5}, n_interpolate={'eeg': 4}
+2025-11-30 02:24:14,429 - INFO - ============================================================
+2025-11-30 02:24:14,429 - INFO - Running GPU benchmark...
+Using GPU acceleration (device=mps)
+Running autoreject on ch_type=eeg
+  Computing/loading LOOCV interpolation matrices... done.
+  Computing thresholds for all channels in batch...
+  Phase 1: Computing interpolation labels for all n_interp values...
+  Phase 2: GPU batch interpolation (2 n_interp values)...
+  Phase 3: Batch CV evaluation (3×2×5 combinations)...
+  ✓ Batch processing complete!
+
+
+
+
+Estimated consensus=0.50 and n_interpolate=4
+2025-11-30 02:24:16,611 - INFO -   GPU time: 2.18s
+2025-11-30 02:24:16,611 - INFO -   GPU memory peak: 97.5 MB
+2025-11-30 02:24:16,611 - INFO -   Results: consensus={'eeg': 0.5}, n_interpolate={'eeg': 4}
+2025-11-30 02:24:16,611 - INFO - ============================================================
+2025-11-30 02:24:16,611 - INFO - SPEEDUP: 17.26x
+2025-11-30 02:24:16,611 - INFO - ✅ Results match exactly
+2025-11-30 02:24:16,612 - INFO - 
+Results saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/results/small_fast.json
+2025-11-30 02:24:16,612 - INFO - Log saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/logs/small_fast.log
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:150: RuntimeWarning: invalid value encountered in subtract
+  diff = cpu_loss - gpu_loss
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:183: UserWarning: Glyph 9989 (\N{WHITE HEAVY CHECK MARK}) missing from font(s) DejaVu Sans.
+  plt.tight_layout()
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:184: UserWarning: Glyph 9989 (\N{WHITE HEAVY CHECK MARK}) missing from font(s) DejaVu Sans.
+  plt.savefig(output_path, dpi=150, bbox_inches='tight')
+2025-11-30 02:24:16,829 - INFO - Figure saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/figures/small_fast.png
+
+============================================================
+✅ BENCHMARK COMPLETE: small_fast
+   Speedup: 17.26x
+   Match: ✅ Exact
+============================================================
+✅ small_fast completed
+
+[2/13] Running standard_64ch...
+2025-11-30 02:24:17,115 - INFO - ============================================================
+2025-11-30 02:24:17,115 - INFO - BENCHMARK: standard_64ch
+2025-11-30 02:24:17,115 - INFO - ============================================================
+2025-11-30 02:24:17,115 - INFO - Config: {
+  "name": "standard_64ch",
+  "channels": 64,
+  "sfreq": 500,
+  "epoch_duration": 2.0,
+  "recording_duration": 10,
+  "cv_folds": 10,
+  "n_interpolate": "medium",
+  "consensus": "standard",
+  "artifact_pct": 0.3
+}
+2025-11-30 02:24:18,528 - INFO - Creating synthetic data...
+2025-11-30 02:24:18,746 - INFO -   Created 300 epochs × 64 channels
+2025-11-30 02:24:18,746 - INFO -   Data size: 153.6 MB
+2025-11-30 02:24:18,746 - INFO - ============================================================
+2025-11-30 02:24:18,746 - INFO - Running CPU benchmark...
+Running autoreject on ch_type=eeg
+
+
+
+
+Estimated consensus=0.30 and n_interpolate=8
+2025-11-30 02:26:35,161 - INFO -   CPU time: 136.41s
+2025-11-30 02:26:35,161 - INFO -   CPU memory peak: 624.0 MB
+2025-11-30 02:26:35,161 - INFO -   Results: consensus={'eeg': 0.30000000000000004}, n_interpolate={'eeg': 8}
+2025-11-30 02:26:35,161 - INFO - ============================================================
+2025-11-30 02:26:35,161 - INFO - Running GPU benchmark...
+Using GPU acceleration (device=mps)
+Running autoreject on ch_type=eeg
+  Computing/loading LOOCV interpolation matrices... done.
+  Computing thresholds for all channels in batch...
+  Phase 1: Computing interpolation labels for all n_interp values...
+  Phase 2: GPU batch interpolation (3 n_interp values)...
+  Phase 3: Batch CV evaluation (5×3×10 combinations)...
+  ✓ Batch processing complete!
+
+
+
+
+Estimated consensus=0.20 and n_interpolate=8
+2025-11-30 02:26:40,567 - INFO -   GPU time: 5.41s
+2025-11-30 02:26:40,568 - INFO -   GPU memory peak: 769.7 MB
+2025-11-30 02:26:40,568 - INFO -   Results: consensus={'eeg': 0.2}, n_interpolate={'eeg': 8}
+2025-11-30 02:26:40,568 - INFO - ============================================================
+2025-11-30 02:26:40,568 - INFO - SPEEDUP: 25.23x
+2025-11-30 02:26:40,568 - INFO - ≈ Results match within tolerance (±1 step)
+2025-11-30 02:26:40,568 - INFO -    Consensus: CPU={'eeg': 0.30000000000000004} vs GPU={'eeg': 0.2} (diff=1 steps)
+2025-11-30 02:26:40,568 - INFO -    N_interpolate: CPU={'eeg': 8} vs GPU={'eeg': 8} (diff=0 steps)
+2025-11-30 02:26:40,569 - INFO - 
+Results saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/results/standard_64ch.json
+2025-11-30 02:26:40,569 - INFO - Log saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/logs/standard_64ch.log
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:150: RuntimeWarning: invalid value encountered in subtract
+  diff = cpu_loss - gpu_loss
+2025-11-30 02:26:40,774 - INFO - Figure saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/figures/standard_64ch.png
+
+============================================================
+✅ BENCHMARK COMPLETE: standard_64ch
+   Speedup: 25.23x
+   Match: ≈ Within tolerance (±1 step)
+============================================================
+✅ standard_64ch completed
+
+[3/13] Running highdensity_128ch...
+2025-11-30 02:26:41,061 - INFO - ============================================================
+2025-11-30 02:26:41,061 - INFO - BENCHMARK: highdensity_128ch
+2025-11-30 02:26:41,061 - INFO - ============================================================
+2025-11-30 02:26:41,061 - INFO - Config: {
+  "name": "highdensity_128ch",
+  "channels": 128,
+  "sfreq": 500,
+  "epoch_duration": 2.0,
+  "recording_duration": 10,
+  "cv_folds": 10,
+  "n_interpolate": "aggressive",
+  "consensus": "standard",
+  "artifact_pct": 0.3
+}
+2025-11-30 02:26:42,468 - INFO - Creating synthetic data...
+2025-11-30 02:26:42,884 - INFO -   Created 300 epochs × 128 channels
+2025-11-30 02:26:42,884 - INFO -   Data size: 307.2 MB
+2025-11-30 02:26:42,884 - INFO - ============================================================
+2025-11-30 02:26:42,884 - INFO - Running CPU benchmark...
+Running autoreject on ch_type=eeg
+
+
+
+
+Estimated consensus=0.30 and n_interpolate=16
+2025-11-30 02:32:08,436 - INFO -   CPU time: 325.55s
+2025-11-30 02:32:08,436 - INFO -   CPU memory peak: 1238.6 MB
+2025-11-30 02:32:08,437 - INFO -   Results: consensus={'eeg': 0.30000000000000004}, n_interpolate={'eeg': 16}
+2025-11-30 02:32:08,437 - INFO - ============================================================
+2025-11-30 02:32:08,437 - INFO - Running GPU benchmark...
+Using GPU acceleration (device=mps)
+Running autoreject on ch_type=eeg
+  Computing/loading LOOCV interpolation matrices... done.
+  Computing thresholds for all channels in batch...
+  Phase 1: Computing interpolation labels for all n_interp values...
+  Phase 2: GPU batch interpolation (6 n_interp values)...
+  Phase 3: Batch CV evaluation (5×6×10 combinations)...
+  ✓ Batch processing complete!
+
+
+
+
+Estimated consensus=0.10 and n_interpolate=12
+2025-11-30 02:32:24,218 - INFO -   GPU time: 15.78s
+2025-11-30 02:32:24,218 - INFO -   GPU memory peak: 1538.4 MB
+2025-11-30 02:32:24,218 - INFO -   Results: consensus={'eeg': 0.1}, n_interpolate={'eeg': 12}
+2025-11-30 02:32:24,219 - INFO - ============================================================
+2025-11-30 02:32:24,219 - INFO - SPEEDUP: 20.63x
+2025-11-30 02:32:24,219 - WARNING - ❌ Results differ significantly!
+2025-11-30 02:32:24,219 - WARNING -    Consensus diff: 2 steps
+2025-11-30 02:32:24,219 - WARNING -    N_interpolate diff: 1 steps
+2025-11-30 02:32:24,221 - INFO - 
+Results saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/results/highdensity_128ch.json
+2025-11-30 02:32:24,221 - INFO - Log saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/logs/highdensity_128ch.log
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:150: RuntimeWarning: invalid value encountered in subtract
+  diff = cpu_loss - gpu_loss
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:183: UserWarning: Glyph 10060 (\N{CROSS MARK}) missing from font(s) DejaVu Sans.
+  plt.tight_layout()
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:184: UserWarning: Glyph 10060 (\N{CROSS MARK}) missing from font(s) DejaVu Sans.
+  plt.savefig(output_path, dpi=150, bbox_inches='tight')
+2025-11-30 02:32:24,430 - INFO - Figure saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/figures/highdensity_128ch.png
+
+============================================================
+✅ BENCHMARK COMPLETE: highdensity_128ch
+   Speedup: 20.63x
+   Match: ❌ Results differ
+============================================================
+✅ highdensity_128ch completed
+
+[4/13] Running ultrahd_256ch...
+2025-11-30 02:32:24,751 - INFO - ============================================================
+2025-11-30 02:32:24,751 - INFO - BENCHMARK: ultrahd_256ch
+2025-11-30 02:32:24,751 - INFO - ============================================================
+2025-11-30 02:32:24,751 - INFO - Config: {
+  "name": "ultrahd_256ch",
+  "channels": 256,
+  "sfreq": 500,
+  "epoch_duration": 2.0,
+  "recording_duration": 10,
+  "cv_folds": 10,
+  "n_interpolate": "aggressive",
+  "consensus": "standard",
+  "artifact_pct": 0.3
+}
+2025-11-30 02:32:26,117 - INFO - Creating synthetic data...
+2025-11-30 02:32:26,939 - INFO -   Created 300 epochs × 256 channels
+2025-11-30 02:32:26,939 - INFO -   Data size: 614.4 MB
+2025-11-30 02:32:26,939 - INFO - ============================================================
+2025-11-30 02:32:26,939 - INFO - Running CPU benchmark...
+Running autoreject on ch_type=eeg
+
+
+
+
+Estimated consensus=0.20 and n_interpolate=16
+2025-11-30 02:43:58,010 - INFO -   CPU time: 691.05s
+2025-11-30 02:43:58,010 - INFO -   CPU memory peak: 2468.8 MB
+2025-11-30 02:43:58,010 - INFO -   Results: consensus={'eeg': 0.2}, n_interpolate={'eeg': 16}
+2025-11-30 02:43:58,011 - INFO - ============================================================
+2025-11-30 02:43:58,011 - INFO - Running GPU benchmark...
+Using GPU acceleration (device=mps)
+Running autoreject on ch_type=eeg
+  Computing/loading LOOCV interpolation matrices... done.
+  Computing thresholds for all channels in batch...
+  Phase 1: Computing interpolation labels for all n_interp values...
+  Phase 2: GPU batch interpolation (6 n_interp values)...
+  Phase 3: Batch CV evaluation (5×6×10 combinations)...
+  ✓ Batch processing complete!
+
+
+
+
+Estimated consensus=0.10 and n_interpolate=16
+2025-11-30 02:44:33,265 - INFO -   GPU time: 35.25s
+2025-11-30 02:44:33,265 - INFO -   GPU memory peak: 3076.1 MB
+2025-11-30 02:44:33,265 - INFO -   Results: consensus={'eeg': 0.1}, n_interpolate={'eeg': 16}
+2025-11-30 02:44:33,265 - INFO - ============================================================
+2025-11-30 02:44:33,265 - INFO - SPEEDUP: 19.60x
+2025-11-30 02:44:33,265 - INFO - ≈ Results match within tolerance (±1 step)
+2025-11-30 02:44:33,265 - INFO -    Consensus: CPU={'eeg': 0.2} vs GPU={'eeg': 0.1} (diff=1 steps)
+2025-11-30 02:44:33,265 - INFO -    N_interpolate: CPU={'eeg': 16} vs GPU={'eeg': 16} (diff=0 steps)
+2025-11-30 02:44:33,269 - INFO - 
+Results saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/results/ultrahd_256ch.json
+2025-11-30 02:44:33,269 - INFO - Log saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/logs/ultrahd_256ch.log
+2025-11-30 02:44:33,487 - INFO - Figure saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/figures/ultrahd_256ch.png
+
+============================================================
+✅ BENCHMARK COMPLETE: ultrahd_256ch
+   Speedup: 19.60x
+   Match: ≈ Within tolerance (±1 step)
+============================================================
+✅ ultrahd_256ch completed
+
+[5/13] Running scaling_32ch...
+2025-11-30 02:44:33,828 - INFO - ============================================================
+2025-11-30 02:44:33,828 - INFO - BENCHMARK: scaling_32ch
+2025-11-30 02:44:33,828 - INFO - ============================================================
+2025-11-30 02:44:33,828 - INFO - Config: {
+  "name": "scaling_32ch",
+  "channels": 32,
+  "sfreq": 500,
+  "epoch_duration": 2.0,
+  "recording_duration": 10,
+  "cv_folds": 10,
+  "n_interpolate": "medium",
+  "consensus": "standard",
+  "artifact_pct": 0.3
+}
+2025-11-30 02:44:35,247 - INFO - Creating synthetic data...
+2025-11-30 02:44:35,358 - INFO -   Created 300 epochs × 32 channels
+2025-11-30 02:44:35,359 - INFO -   Data size: 76.8 MB
+2025-11-30 02:44:35,359 - INFO - ============================================================
+2025-11-30 02:44:35,359 - INFO - Running CPU benchmark...
+Running autoreject on ch_type=eeg
+
+
+
+
+Estimated consensus=0.30 and n_interpolate=8
+2025-11-30 02:45:42,508 - INFO -   CPU time: 67.15s
+2025-11-30 02:45:42,508 - INFO -   CPU memory peak: 316.6 MB
+2025-11-30 02:45:42,508 - INFO -   Results: consensus={'eeg': 0.30000000000000004}, n_interpolate={'eeg': 8}
+2025-11-30 02:45:42,508 - INFO - ============================================================
+2025-11-30 02:45:42,508 - INFO - Running GPU benchmark...
+Using GPU acceleration (device=mps)
+Running autoreject on ch_type=eeg
+  Computing/loading LOOCV interpolation matrices... done.
+  Computing thresholds for all channels in batch...
+  Phase 1: Computing interpolation labels for all n_interp values...
+  Phase 2: GPU batch interpolation (3 n_interp values)...
+  Phase 3: Batch CV evaluation (5×3×10 combinations)...
+  ✓ Batch processing complete!
+
+
+
+
+Estimated consensus=0.30 and n_interpolate=8
+2025-11-30 02:45:46,300 - INFO -   GPU time: 3.79s
+2025-11-30 02:45:46,300 - INFO -   GPU memory peak: 385.4 MB
+2025-11-30 02:45:46,300 - INFO -   Results: consensus={'eeg': 0.30000000000000004}, n_interpolate={'eeg': 8}
+2025-11-30 02:45:46,300 - INFO - ============================================================
+2025-11-30 02:45:46,300 - INFO - SPEEDUP: 17.71x
+2025-11-30 02:45:46,300 - INFO - ✅ Results match exactly
+2025-11-30 02:45:46,301 - INFO - 
+Results saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/results/scaling_32ch.json
+2025-11-30 02:45:46,301 - INFO - Log saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/logs/scaling_32ch.log
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:150: RuntimeWarning: invalid value encountered in subtract
+  diff = cpu_loss - gpu_loss
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:183: UserWarning: Glyph 9989 (\N{WHITE HEAVY CHECK MARK}) missing from font(s) DejaVu Sans.
+  plt.tight_layout()
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:184: UserWarning: Glyph 9989 (\N{WHITE HEAVY CHECK MARK}) missing from font(s) DejaVu Sans.
+  plt.savefig(output_path, dpi=150, bbox_inches='tight')
+2025-11-30 02:45:46,505 - INFO - Figure saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/figures/scaling_32ch.png
+
+============================================================
+✅ BENCHMARK COMPLETE: scaling_32ch
+   Speedup: 17.71x
+   Match: ✅ Exact
+============================================================
+✅ scaling_32ch completed
+
+[6/13] Running scaling_64ch...
+2025-11-30 02:45:46,761 - INFO - ============================================================
+2025-11-30 02:45:46,761 - INFO - BENCHMARK: scaling_64ch
+2025-11-30 02:45:46,761 - INFO - ============================================================
+2025-11-30 02:45:46,761 - INFO - Config: {
+  "name": "scaling_64ch",
+  "channels": 64,
+  "sfreq": 500,
+  "epoch_duration": 2.0,
+  "recording_duration": 10,
+  "cv_folds": 10,
+  "n_interpolate": "medium",
+  "consensus": "standard",
+  "artifact_pct": 0.3
+}
+2025-11-30 02:45:48,110 - INFO - Creating synthetic data...
+2025-11-30 02:45:48,323 - INFO -   Created 300 epochs × 64 channels
+2025-11-30 02:45:48,323 - INFO -   Data size: 153.6 MB
+2025-11-30 02:45:48,323 - INFO - ============================================================
+2025-11-30 02:45:48,323 - INFO - Running CPU benchmark...
+Running autoreject on ch_type=eeg
+
+
+
+
+Estimated consensus=0.30 and n_interpolate=8
+2025-11-30 02:48:00,472 - INFO -   CPU time: 132.14s
+2025-11-30 02:48:00,472 - INFO -   CPU memory peak: 624.0 MB
+2025-11-30 02:48:00,472 - INFO -   Results: consensus={'eeg': 0.30000000000000004}, n_interpolate={'eeg': 8}
+2025-11-30 02:48:00,472 - INFO - ============================================================
+2025-11-30 02:48:00,472 - INFO - Running GPU benchmark...
+Using GPU acceleration (device=mps)
+Running autoreject on ch_type=eeg
+  Computing/loading LOOCV interpolation matrices... done.
+  Computing thresholds for all channels in batch...
+  Phase 1: Computing interpolation labels for all n_interp values...
+  Phase 2: GPU batch interpolation (3 n_interp values)...
+  Phase 3: Batch CV evaluation (5×3×10 combinations)...
+  ✓ Batch processing complete!
+
+
+
+
+Estimated consensus=0.20 and n_interpolate=8
+2025-11-30 02:48:05,990 - INFO -   GPU time: 5.52s
+2025-11-30 02:48:05,991 - INFO -   GPU memory peak: 769.7 MB
+2025-11-30 02:48:05,991 - INFO -   Results: consensus={'eeg': 0.2}, n_interpolate={'eeg': 8}
+2025-11-30 02:48:05,991 - INFO - ============================================================
+2025-11-30 02:48:05,991 - INFO - SPEEDUP: 23.95x
+2025-11-30 02:48:05,991 - INFO - ≈ Results match within tolerance (±1 step)
+2025-11-30 02:48:05,991 - INFO -    Consensus: CPU={'eeg': 0.30000000000000004} vs GPU={'eeg': 0.2} (diff=1 steps)
+2025-11-30 02:48:05,991 - INFO -    N_interpolate: CPU={'eeg': 8} vs GPU={'eeg': 8} (diff=0 steps)
+2025-11-30 02:48:05,992 - INFO - 
+Results saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/results/scaling_64ch.json
+2025-11-30 02:48:05,992 - INFO - Log saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/logs/scaling_64ch.log
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:150: RuntimeWarning: invalid value encountered in subtract
+  diff = cpu_loss - gpu_loss
+2025-11-30 02:48:06,221 - INFO - Figure saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/figures/scaling_64ch.png
+
+============================================================
+✅ BENCHMARK COMPLETE: scaling_64ch
+   Speedup: 23.95x
+   Match: ≈ Within tolerance (±1 step)
+============================================================
+✅ scaling_64ch completed
+
+[7/13] Running scaling_128ch...
+2025-11-30 02:48:06,544 - INFO - ============================================================
+2025-11-30 02:48:06,544 - INFO - BENCHMARK: scaling_128ch
+2025-11-30 02:48:06,544 - INFO - ============================================================
+2025-11-30 02:48:06,544 - INFO - Config: {
+  "name": "scaling_128ch",
+  "channels": 128,
+  "sfreq": 500,
+  "epoch_duration": 2.0,
+  "recording_duration": 10,
+  "cv_folds": 10,
+  "n_interpolate": "medium",
+  "consensus": "standard",
+  "artifact_pct": 0.3
+}
+2025-11-30 02:48:07,900 - INFO - Creating synthetic data...
+2025-11-30 02:48:08,320 - INFO -   Created 300 epochs × 128 channels
+2025-11-30 02:48:08,320 - INFO -   Data size: 307.2 MB
+2025-11-30 02:48:08,320 - INFO - ============================================================
+2025-11-30 02:48:08,320 - INFO - Running CPU benchmark...
+Running autoreject on ch_type=eeg
+
+
+
+
+Estimated consensus=0.10 and n_interpolate=8
+2025-11-30 02:52:44,791 - INFO -   CPU time: 276.50s
+2025-11-30 02:52:44,791 - INFO -   CPU memory peak: 1238.6 MB
+2025-11-30 02:52:44,791 - INFO -   Results: consensus={'eeg': 0.1}, n_interpolate={'eeg': 8}
+2025-11-30 02:52:44,791 - INFO - ============================================================
+2025-11-30 02:52:44,791 - INFO - Running GPU benchmark...
+Using GPU acceleration (device=mps)
+Running autoreject on ch_type=eeg
+  Computing/loading LOOCV interpolation matrices... done.
+  Computing thresholds for all channels in batch...
+  Phase 1: Computing interpolation labels for all n_interp values...
+  Phase 2: GPU batch interpolation (3 n_interp values)...
+  Phase 3: Batch CV evaluation (5×3×10 combinations)...
+  ✓ Batch processing complete!
+
+
+
+
+Estimated consensus=0.10 and n_interpolate=8
+2025-11-30 02:52:55,138 - INFO -   GPU time: 10.35s
+2025-11-30 02:52:55,138 - INFO -   GPU memory peak: 1538.4 MB
+2025-11-30 02:52:55,138 - INFO -   Results: consensus={'eeg': 0.1}, n_interpolate={'eeg': 8}
+2025-11-30 02:52:55,138 - INFO - ============================================================
+2025-11-30 02:52:55,138 - INFO - SPEEDUP: 26.72x
+2025-11-30 02:52:55,138 - INFO - ✅ Results match exactly
+2025-11-30 02:52:55,140 - INFO - 
+Results saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/results/scaling_128ch.json
+2025-11-30 02:52:55,140 - INFO - Log saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/logs/scaling_128ch.log
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:183: UserWarning: Glyph 9989 (\N{WHITE HEAVY CHECK MARK}) missing from font(s) DejaVu Sans.
+  plt.tight_layout()
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:184: UserWarning: Glyph 9989 (\N{WHITE HEAVY CHECK MARK}) missing from font(s) DejaVu Sans.
+  plt.savefig(output_path, dpi=150, bbox_inches='tight')
+2025-11-30 02:52:55,363 - INFO - Figure saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/figures/scaling_128ch.png
+
+============================================================
+✅ BENCHMARK COMPLETE: scaling_128ch
+   Speedup: 26.72x
+   Match: ✅ Exact
+============================================================
+✅ scaling_128ch completed
+
+[8/13] Running scaling_256ch...
+2025-11-30 02:52:55,686 - INFO - ============================================================
+2025-11-30 02:52:55,686 - INFO - BENCHMARK: scaling_256ch
+2025-11-30 02:52:55,686 - INFO - ============================================================
+2025-11-30 02:52:55,686 - INFO - Config: {
+  "name": "scaling_256ch",
+  "channels": 256,
+  "sfreq": 500,
+  "epoch_duration": 2.0,
+  "recording_duration": 10,
+  "cv_folds": 10,
+  "n_interpolate": "medium",
+  "consensus": "standard",
+  "artifact_pct": 0.3
+}
+2025-11-30 02:52:57,053 - INFO - Creating synthetic data...
+2025-11-30 02:52:57,881 - INFO -   Created 300 epochs × 256 channels
+2025-11-30 02:52:57,881 - INFO -   Data size: 614.4 MB
+2025-11-30 02:52:57,881 - INFO - ============================================================
+2025-11-30 02:52:57,881 - INFO - Running CPU benchmark...
+Running autoreject on ch_type=eeg
+
+
+
+
+Estimated consensus=0.10 and n_interpolate=8
+2025-11-30 03:02:36,812 - INFO -   CPU time: 578.91s
+2025-11-30 03:02:36,812 - INFO -   CPU memory peak: 2468.8 MB
+2025-11-30 03:02:36,812 - INFO -   Results: consensus={'eeg': 0.1}, n_interpolate={'eeg': 8}
+2025-11-30 03:02:36,812 - INFO - ============================================================
+2025-11-30 03:02:36,812 - INFO - Running GPU benchmark...
+Using GPU acceleration (device=mps)
+Running autoreject on ch_type=eeg
+  Computing/loading LOOCV interpolation matrices... done.
+  Computing thresholds for all channels in batch...
+  Phase 1: Computing interpolation labels for all n_interp values...
+  Phase 2: GPU batch interpolation (3 n_interp values)...
+  Phase 3: Batch CV evaluation (5×3×10 combinations)...
+  ✓ Batch processing complete!
+
+
+
+
+Estimated consensus=0.10 and n_interpolate=8
+2025-11-30 03:02:59,583 - INFO -   GPU time: 22.77s
+2025-11-30 03:02:59,583 - INFO -   GPU memory peak: 3076.1 MB
+2025-11-30 03:02:59,583 - INFO -   Results: consensus={'eeg': 0.1}, n_interpolate={'eeg': 8}
+2025-11-30 03:02:59,583 - INFO - ============================================================
+2025-11-30 03:02:59,583 - INFO - SPEEDUP: 25.42x
+2025-11-30 03:02:59,583 - INFO - ✅ Results match exactly
+2025-11-30 03:02:59,588 - INFO - 
+Results saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/results/scaling_256ch.json
+2025-11-30 03:02:59,588 - INFO - Log saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/logs/scaling_256ch.log
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:183: UserWarning: Glyph 9989 (\N{WHITE HEAVY CHECK MARK}) missing from font(s) DejaVu Sans.
+  plt.tight_layout()
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:184: UserWarning: Glyph 9989 (\N{WHITE HEAVY CHECK MARK}) missing from font(s) DejaVu Sans.
+  plt.savefig(output_path, dpi=150, bbox_inches='tight')
+2025-11-30 03:02:59,840 - INFO - Figure saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/figures/scaling_256ch.png
+
+============================================================
+✅ BENCHMARK COMPLETE: scaling_256ch
+   Speedup: 25.42x
+   Match: ✅ Exact
+============================================================
+✅ scaling_256ch completed
+
+[9/13] Running duration_5min...
+2025-11-30 03:03:00,154 - INFO - ============================================================
+2025-11-30 03:03:00,154 - INFO - BENCHMARK: duration_5min
+2025-11-30 03:03:00,154 - INFO - ============================================================
+2025-11-30 03:03:00,154 - INFO - Config: {
+  "name": "duration_5min",
+  "channels": 64,
+  "sfreq": 500,
+  "epoch_duration": 2.0,
+  "recording_duration": 5,
+  "cv_folds": 10,
+  "n_interpolate": "medium",
+  "consensus": "standard",
+  "artifact_pct": 0.3
+}
+2025-11-30 03:03:01,565 - INFO - Creating synthetic data...
+2025-11-30 03:03:01,680 - INFO -   Created 150 epochs × 64 channels
+2025-11-30 03:03:01,680 - INFO -   Data size: 76.8 MB
+2025-11-30 03:03:01,680 - INFO - ============================================================
+2025-11-30 03:03:01,680 - INFO - Running CPU benchmark...
+Running autoreject on ch_type=eeg
+
+
+
+
+Estimated consensus=0.30 and n_interpolate=8
+2025-11-30 03:04:11,541 - INFO -   CPU time: 69.86s
+2025-11-30 03:04:11,541 - INFO -   CPU memory peak: 312.3 MB
+2025-11-30 03:04:11,541 - INFO -   Results: consensus={'eeg': 0.30000000000000004}, n_interpolate={'eeg': 8}
+2025-11-30 03:04:11,541 - INFO - ============================================================
+2025-11-30 03:04:11,541 - INFO - Running GPU benchmark...
+Using GPU acceleration (device=mps)
+Running autoreject on ch_type=eeg
+  Computing/loading LOOCV interpolation matrices... done.
+  Computing thresholds for all channels in batch...
+  Phase 1: Computing interpolation labels for all n_interp values...
+  Phase 2: GPU batch interpolation (3 n_interp values)...
+  Phase 3: Batch CV evaluation (5×3×10 combinations)...
+  ✓ Batch processing complete!
+
+
+
+
+Estimated consensus=0.20 and n_interpolate=8
+2025-11-30 03:04:16,104 - INFO -   GPU time: 4.56s
+2025-11-30 03:04:16,104 - INFO -   GPU memory peak: 385.2 MB
+2025-11-30 03:04:16,104 - INFO -   Results: consensus={'eeg': 0.2}, n_interpolate={'eeg': 8}
+2025-11-30 03:04:16,105 - INFO - ============================================================
+2025-11-30 03:04:16,105 - INFO - SPEEDUP: 15.31x
+2025-11-30 03:04:16,105 - INFO - ≈ Results match within tolerance (±1 step)
+2025-11-30 03:04:16,105 - INFO -    Consensus: CPU={'eeg': 0.30000000000000004} vs GPU={'eeg': 0.2} (diff=1 steps)
+2025-11-30 03:04:16,105 - INFO -    N_interpolate: CPU={'eeg': 8} vs GPU={'eeg': 8} (diff=0 steps)
+2025-11-30 03:04:16,107 - INFO - 
+Results saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/results/duration_5min.json
+2025-11-30 03:04:16,107 - INFO - Log saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/logs/duration_5min.log
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:150: RuntimeWarning: invalid value encountered in subtract
+  diff = cpu_loss - gpu_loss
+2025-11-30 03:04:16,310 - INFO - Figure saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/figures/duration_5min.png
+
+============================================================
+✅ BENCHMARK COMPLETE: duration_5min
+   Speedup: 15.31x
+   Match: ≈ Within tolerance (±1 step)
+============================================================
+✅ duration_5min completed
+
+[10/13] Running duration_10min...
+2025-11-30 03:04:16,567 - INFO - ============================================================
+2025-11-30 03:04:16,567 - INFO - BENCHMARK: duration_10min
+2025-11-30 03:04:16,568 - INFO - ============================================================
+2025-11-30 03:04:16,568 - INFO - Config: {
+  "name": "duration_10min",
+  "channels": 64,
+  "sfreq": 500,
+  "epoch_duration": 2.0,
+  "recording_duration": 10,
+  "cv_folds": 10,
+  "n_interpolate": "medium",
+  "consensus": "standard",
+  "artifact_pct": 0.3
+}
+2025-11-30 03:04:17,977 - INFO - Creating synthetic data...
+2025-11-30 03:04:18,196 - INFO -   Created 300 epochs × 64 channels
+2025-11-30 03:04:18,196 - INFO -   Data size: 153.6 MB
+2025-11-30 03:04:18,196 - INFO - ============================================================
+2025-11-30 03:04:18,196 - INFO - Running CPU benchmark...
+Running autoreject on ch_type=eeg
+
+
+
+
+Estimated consensus=0.30 and n_interpolate=8
+2025-11-30 03:06:32,423 - INFO -   CPU time: 134.22s
+2025-11-30 03:06:32,423 - INFO -   CPU memory peak: 623.9 MB
+2025-11-30 03:06:32,423 - INFO -   Results: consensus={'eeg': 0.30000000000000004}, n_interpolate={'eeg': 8}
+2025-11-30 03:06:32,423 - INFO - ============================================================
+2025-11-30 03:06:32,423 - INFO - Running GPU benchmark...
+Using GPU acceleration (device=mps)
+Running autoreject on ch_type=eeg
+  Computing/loading LOOCV interpolation matrices... done.
+  Computing thresholds for all channels in batch...
+  Phase 1: Computing interpolation labels for all n_interp values...
+  Phase 2: GPU batch interpolation (3 n_interp values)...
+  Phase 3: Batch CV evaluation (5×3×10 combinations)...
+  ✓ Batch processing complete!
+
+
+
+
+Estimated consensus=0.20 and n_interpolate=8
+2025-11-30 03:06:37,836 - INFO -   GPU time: 5.41s
+2025-11-30 03:06:37,836 - INFO -   GPU memory peak: 769.8 MB
+2025-11-30 03:06:37,836 - INFO -   Results: consensus={'eeg': 0.2}, n_interpolate={'eeg': 8}
+2025-11-30 03:06:37,836 - INFO - ============================================================
+2025-11-30 03:06:37,836 - INFO - SPEEDUP: 24.80x
+2025-11-30 03:06:37,836 - INFO - ≈ Results match within tolerance (±1 step)
+2025-11-30 03:06:37,836 - INFO -    Consensus: CPU={'eeg': 0.30000000000000004} vs GPU={'eeg': 0.2} (diff=1 steps)
+2025-11-30 03:06:37,836 - INFO -    N_interpolate: CPU={'eeg': 8} vs GPU={'eeg': 8} (diff=0 steps)
+2025-11-30 03:06:37,838 - INFO - 
+Results saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/results/duration_10min.json
+2025-11-30 03:06:37,838 - INFO - Log saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/logs/duration_10min.log
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:150: RuntimeWarning: invalid value encountered in subtract
+  diff = cpu_loss - gpu_loss
+2025-11-30 03:06:38,042 - INFO - Figure saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/figures/duration_10min.png
+
+============================================================
+✅ BENCHMARK COMPLETE: duration_10min
+   Speedup: 24.80x
+   Match: ≈ Within tolerance (±1 step)
+============================================================
+✅ duration_10min completed
+
+[11/13] Running duration_20min...
+2025-11-30 03:06:38,311 - INFO - ============================================================
+2025-11-30 03:06:38,311 - INFO - BENCHMARK: duration_20min
+2025-11-30 03:06:38,312 - INFO - ============================================================
+2025-11-30 03:06:38,312 - INFO - Config: {
+  "name": "duration_20min",
+  "channels": 64,
+  "sfreq": 500,
+  "epoch_duration": 2.0,
+  "recording_duration": 20,
+  "cv_folds": 10,
+  "n_interpolate": "medium",
+  "consensus": "standard",
+  "artifact_pct": 0.3
+}
+2025-11-30 03:06:39,704 - INFO - Creating synthetic data...
+2025-11-30 03:06:40,126 - INFO -   Created 600 epochs × 64 channels
+2025-11-30 03:06:40,126 - INFO -   Data size: 307.2 MB
+2025-11-30 03:06:40,126 - INFO - ============================================================
+2025-11-30 03:06:40,126 - INFO - Running CPU benchmark...
+Running autoreject on ch_type=eeg
+
+
+
+
+Estimated consensus=0.50 and n_interpolate=8
+2025-11-30 03:11:20,330 - INFO -   CPU time: 280.20s
+2025-11-30 03:11:20,330 - INFO -   CPU memory peak: 1247.0 MB
+2025-11-30 03:11:20,330 - INFO -   Results: consensus={'eeg': 0.5}, n_interpolate={'eeg': 8}
+2025-11-30 03:11:20,330 - INFO - ============================================================
+2025-11-30 03:11:20,330 - INFO - Running GPU benchmark...
+Using GPU acceleration (device=mps)
+Running autoreject on ch_type=eeg
+  Computing/loading LOOCV interpolation matrices... done.
+  Computing thresholds for all channels in batch...
+  Phase 1: Computing interpolation labels for all n_interp values...
+  Phase 2: GPU batch interpolation (3 n_interp values)...
+  Phase 3: Batch CV evaluation (5×3×10 combinations)...
+  ✓ Batch processing complete!
+
+
+
+
+Estimated consensus=0.50 and n_interpolate=8
+2025-11-30 03:11:28,062 - INFO -   GPU time: 7.73s
+2025-11-30 03:11:28,062 - INFO -   GPU memory peak: 1539.1 MB
+2025-11-30 03:11:28,062 - INFO -   Results: consensus={'eeg': 0.5}, n_interpolate={'eeg': 8}
+2025-11-30 03:11:28,062 - INFO - ============================================================
+2025-11-30 03:11:28,062 - INFO - SPEEDUP: 36.24x
+2025-11-30 03:11:28,062 - INFO - ✅ Results match exactly
+2025-11-30 03:11:28,065 - INFO - 
+Results saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/results/duration_20min.json
+2025-11-30 03:11:28,065 - INFO - Log saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/logs/duration_20min.log
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:150: RuntimeWarning: invalid value encountered in subtract
+  diff = cpu_loss - gpu_loss
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:183: UserWarning: Glyph 9989 (\N{WHITE HEAVY CHECK MARK}) missing from font(s) DejaVu Sans.
+  plt.tight_layout()
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:184: UserWarning: Glyph 9989 (\N{WHITE HEAVY CHECK MARK}) missing from font(s) DejaVu Sans.
+  plt.savefig(output_path, dpi=150, bbox_inches='tight')
+2025-11-30 03:11:28,269 - INFO - Figure saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/figures/duration_20min.png
+
+============================================================
+✅ BENCHMARK COMPLETE: duration_20min
+   Speedup: 36.24x
+   Match: ✅ Exact
+============================================================
+✅ duration_20min completed
+
+[12/13] Running clean_10pct...
+2025-11-30 03:11:28,572 - INFO - ============================================================
+2025-11-30 03:11:28,572 - INFO - BENCHMARK: clean_10pct
+2025-11-30 03:11:28,572 - INFO - ============================================================
+2025-11-30 03:11:28,572 - INFO - Config: {
+  "name": "clean_10pct",
+  "channels": 64,
+  "sfreq": 500,
+  "epoch_duration": 2.0,
+  "recording_duration": 10,
+  "cv_folds": 10,
+  "n_interpolate": "medium",
+  "consensus": "standard",
+  "artifact_pct": 0.1
+}
+2025-11-30 03:11:29,978 - INFO - Creating synthetic data...
+2025-11-30 03:11:30,191 - INFO -   Created 300 epochs × 64 channels
+2025-11-30 03:11:30,191 - INFO -   Data size: 153.6 MB
+2025-11-30 03:11:30,191 - INFO - ============================================================
+2025-11-30 03:11:30,191 - INFO - Running CPU benchmark...
+Running autoreject on ch_type=eeg
+
+
+
+
+Estimated consensus=0.40 and n_interpolate=8
+2025-11-30 03:13:43,314 - INFO -   CPU time: 133.12s
+2025-11-30 03:13:43,314 - INFO -   CPU memory peak: 623.9 MB
+2025-11-30 03:13:43,314 - INFO -   Results: consensus={'eeg': 0.4}, n_interpolate={'eeg': 8}
+2025-11-30 03:13:43,314 - INFO - ============================================================
+2025-11-30 03:13:43,314 - INFO - Running GPU benchmark...
+Using GPU acceleration (device=mps)
+Running autoreject on ch_type=eeg
+  Computing/loading LOOCV interpolation matrices... done.
+  Computing thresholds for all channels in batch...
+  Phase 1: Computing interpolation labels for all n_interp values...
+  Phase 2: GPU batch interpolation (3 n_interp values)...
+  Phase 3: Batch CV evaluation (5×3×10 combinations)...
+  ✓ Batch processing complete!
+
+
+
+
+Estimated consensus=0.40 and n_interpolate=8
+2025-11-30 03:13:49,037 - INFO -   GPU time: 5.72s
+2025-11-30 03:13:49,037 - INFO -   GPU memory peak: 769.7 MB
+2025-11-30 03:13:49,037 - INFO -   Results: consensus={'eeg': 0.4}, n_interpolate={'eeg': 8}
+2025-11-30 03:13:49,037 - INFO - ============================================================
+2025-11-30 03:13:49,037 - INFO - SPEEDUP: 23.26x
+2025-11-30 03:13:49,037 - INFO - ✅ Results match exactly
+2025-11-30 03:13:49,038 - INFO - 
+Results saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/results/clean_10pct.json
+2025-11-30 03:13:49,038 - INFO - Log saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/logs/clean_10pct.log
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:150: RuntimeWarning: invalid value encountered in subtract
+  diff = cpu_loss - gpu_loss
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:183: UserWarning: Glyph 9989 (\N{WHITE HEAVY CHECK MARK}) missing from font(s) DejaVu Sans.
+  plt.tight_layout()
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:184: UserWarning: Glyph 9989 (\N{WHITE HEAVY CHECK MARK}) missing from font(s) DejaVu Sans.
+  plt.savefig(output_path, dpi=150, bbox_inches='tight')
+2025-11-30 03:13:49,239 - INFO - Figure saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/figures/clean_10pct.png
+
+============================================================
+✅ BENCHMARK COMPLETE: clean_10pct
+   Speedup: 23.26x
+   Match: ✅ Exact
+============================================================
+✅ clean_10pct completed
+
+[13/13] Running noisy_30pct...
+2025-11-30 03:13:49,510 - INFO - ============================================================
+2025-11-30 03:13:49,510 - INFO - BENCHMARK: noisy_30pct
+2025-11-30 03:13:49,510 - INFO - ============================================================
+2025-11-30 03:13:49,511 - INFO - Config: {
+  "name": "noisy_30pct",
+  "channels": 64,
+  "sfreq": 500,
+  "epoch_duration": 2.0,
+  "recording_duration": 10,
+  "cv_folds": 10,
+  "n_interpolate": "medium",
+  "consensus": "standard",
+  "artifact_pct": 0.3
+}
+2025-11-30 03:13:50,897 - INFO - Creating synthetic data...
+2025-11-30 03:13:51,115 - INFO -   Created 300 epochs × 64 channels
+2025-11-30 03:13:51,116 - INFO -   Data size: 153.6 MB
+2025-11-30 03:13:51,116 - INFO - ============================================================
+2025-11-30 03:13:51,116 - INFO - Running CPU benchmark...
+Running autoreject on ch_type=eeg
+
+
+
+
+Estimated consensus=0.30 and n_interpolate=8
+2025-11-30 03:16:06,198 - INFO -   CPU time: 135.07s
+2025-11-30 03:16:06,198 - INFO -   CPU memory peak: 623.9 MB
+2025-11-30 03:16:06,198 - INFO -   Results: consensus={'eeg': 0.30000000000000004}, n_interpolate={'eeg': 8}
+2025-11-30 03:16:06,198 - INFO - ============================================================
+2025-11-30 03:16:06,198 - INFO - Running GPU benchmark...
+Using GPU acceleration (device=mps)
+Running autoreject on ch_type=eeg
+  Computing/loading LOOCV interpolation matrices... done.
+  Computing thresholds for all channels in batch...
+  Phase 1: Computing interpolation labels for all n_interp values...
+  Phase 2: GPU batch interpolation (3 n_interp values)...
+  Phase 3: Batch CV evaluation (5×3×10 combinations)...
+  ✓ Batch processing complete!
+
+
+
+
+Estimated consensus=0.20 and n_interpolate=8
+2025-11-30 03:16:11,980 - INFO -   GPU time: 5.78s
+2025-11-30 03:16:11,980 - INFO -   GPU memory peak: 769.7 MB
+2025-11-30 03:16:11,980 - INFO -   Results: consensus={'eeg': 0.2}, n_interpolate={'eeg': 8}
+2025-11-30 03:16:11,980 - INFO - ============================================================
+2025-11-30 03:16:11,980 - INFO - SPEEDUP: 23.36x
+2025-11-30 03:16:11,980 - INFO - ≈ Results match within tolerance (±1 step)
+2025-11-30 03:16:11,980 - INFO -    Consensus: CPU={'eeg': 0.30000000000000004} vs GPU={'eeg': 0.2} (diff=1 steps)
+2025-11-30 03:16:11,980 - INFO -    N_interpolate: CPU={'eeg': 8} vs GPU={'eeg': 8} (diff=0 steps)
+2025-11-30 03:16:11,981 - INFO - 
+Results saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/results/noisy_30pct.json
+2025-11-30 03:16:11,981 - INFO - Log saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/logs/noisy_30pct.log
+/Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/run_single.py:150: RuntimeWarning: invalid value encountered in subtract
+  diff = cpu_loss - gpu_loss
+2025-11-30 03:16:12,206 - INFO - Figure saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/figures/noisy_30pct.png
+
+============================================================
+✅ BENCHMARK COMPLETE: noisy_30pct
+   Speedup: 23.36x
+   Match: ≈ Within tolerance (±1 step)
+============================================================
+✅ noisy_30pct completed
+
+============================================================
+BENCHMARK SUMMARY
+============================================================
+Total run: 13
+Successful: 13
+Failed: 0
+Total time: 0:52:37.153130
+
+Orchestrator log saved to: /Users/remyramadour/Workspace/PPSP/Sandbox/autoreject/benchmarks/orchestrator_log_20251130_031612.json
+
+💡 Run 'python generate_report.py' to generate figures and report

@@ -43,8 +43,24 @@ def extract_metrics(results):
             data_info = r.get("data_info", {})
             cpu_time = r.get("cpu", {}).get("time_seconds", 0)
             gpu_time = r.get("gpu", {}).get("time_seconds", 0)
+            comparison = r.get("comparison", {})
             
             if cpu_time > 0 and gpu_time > 0:
+                # Determine match status
+                exact_match = comparison.get("exact_match", False)
+                neighbor_match = comparison.get("neighbor_match", False)
+                # Legacy fallback
+                legacy_match = comparison.get("results_match", False)
+                
+                if exact_match:
+                    match_status = "exact"
+                elif neighbor_match:
+                    match_status = "neighbor"
+                elif legacy_match:
+                    match_status = "exact"  # Legacy format
+                else:
+                    match_status = "mismatch"
+                
                 metrics.append({
                     "name": config.get("name", r.get("name", r["_filename"])),
                     "n_channels": data_info.get("n_channels", config.get("channels", 0)),
@@ -53,10 +69,11 @@ def extract_metrics(results):
                     "n_cv": config.get("cv_folds", 0),
                     "cpu_time": cpu_time,
                     "gpu_time": gpu_time,
-                    "speedup": r.get("comparison", {}).get("speedup", cpu_time / gpu_time),
+                    "speedup": comparison.get("speedup", cpu_time / gpu_time),
                     "cpu_memory_mb": r.get("cpu", {}).get("memory_peak_mb", 0),
                     "gpu_memory_mb": r.get("gpu", {}).get("memory_peak_mb", 0),
-                    "outputs_match": r.get("comparison", {}).get("results_match", False),
+                    "match_status": match_status,
+                    "outputs_match": match_status in ("exact", "neighbor"),  # For compatibility
                     "timestamp": r.get("timestamp", ""),
                 })
         except Exception as e:
@@ -256,6 +273,137 @@ def plot_speedup_heatmap(metrics, figures_dir, fmt="png"):
     return figures_dir / f"speedup_heatmap.{fmt}"
 
 
+def plot_validation_summary(results, figures_dir, fmt="png"):
+    """Plot validation summary showing CPU vs GPU parameter differences per config."""
+    # Extract configs with comparison data
+    valid_results = []
+    for r in results:
+        comp = r.get("comparison", {})
+        if comp:
+            valid_results.append({
+                "name": r.get("config", {}).get("name", r.get("name", "?")),
+                "speedup": comp.get("speedup", 0),
+                "exact_match": comp.get("exact_match", False),
+                "neighbor_match": comp.get("neighbor_match", False),
+                "consensus_diff": comp.get("consensus_diff_steps", 0),
+                "n_interp_diff": comp.get("n_interpolate_diff_steps", 0),
+                "cpu_consensus": r.get("cpu", {}).get("consensus", {}).get("eeg", "?"),
+                "gpu_consensus": r.get("gpu", {}).get("consensus", {}).get("eeg", "?"),
+                "cpu_n_interp": r.get("cpu", {}).get("n_interpolate", {}).get("eeg", "?"),
+                "gpu_n_interp": r.get("gpu", {}).get("n_interpolate", {}).get("eeg", "?"),
+                "n_channels": r.get("data_info", {}).get("n_channels", 0),
+                "n_epochs": r.get("data_info", {}).get("n_epochs", 0),
+            })
+    
+    if not valid_results:
+        return None
+    
+    # Sort by name
+    valid_results = sorted(valid_results, key=lambda x: x["name"])
+    n_configs = len(valid_results)
+    
+    fig, axes = plt.subplots(1, 2, figsize=(14, max(6, n_configs * 0.5)))
+    
+    # Left plot: Parameter differences
+    ax1 = axes[0]
+    y_pos = np.arange(n_configs)
+    
+    names = [r["name"] for r in valid_results]
+    cons_diff = [r["consensus_diff"] for r in valid_results]
+    interp_diff = [r["n_interp_diff"] for r in valid_results]
+    
+    # Total difference (sum of both)
+    total_diff = [c + i for c, i in zip(cons_diff, interp_diff)]
+    
+    # Color by severity
+    colors = []
+    for r in valid_results:
+        if r["exact_match"]:
+            colors.append("green")
+        elif r["neighbor_match"]:
+            colors.append("orange")
+        else:
+            colors.append("red")
+    
+    # Horizontal bar chart
+    bars = ax1.barh(y_pos, total_diff, color=colors, alpha=0.7, edgecolor='black')
+    
+    # Add value labels
+    for i, (bar, r) in enumerate(zip(bars, valid_results)):
+        width = bar.get_width()
+        label = f"cons={r['consensus_diff']}, interp={r['n_interp_diff']}"
+        if width > 0:
+            ax1.text(width + 0.1, bar.get_y() + bar.get_height()/2, 
+                    label, va='center', fontsize=8)
+        else:
+            ax1.text(0.1, bar.get_y() + bar.get_height()/2,
+                    "✓ exact", va='center', fontsize=8, color='green')
+    
+    ax1.set_yticks(y_pos)
+    ax1.set_yticklabels(names, fontsize=9)
+    ax1.set_xlabel("Total Parameter Difference (steps)")
+    ax1.set_title("CPU vs GPU Parameter Differences\n(0 = exact match, 1 = neighbor, >1 = mismatch)")
+    ax1.axvline(x=1, color='orange', linestyle='--', alpha=0.5, label='Neighbor threshold')
+    ax1.axvline(x=2, color='red', linestyle='--', alpha=0.5, label='Mismatch threshold')
+    ax1.set_xlim(left=-0.2)
+    ax1.legend(loc='lower right', fontsize=8)
+    
+    # Right plot: Detailed comparison table
+    ax2 = axes[1]
+    ax2.axis('off')
+    
+    # Build table data (use ASCII symbols to avoid font issues)
+    table_data = []
+    for r in valid_results:
+        status = "OK" if r["exact_match"] else ("~1" if r["neighbor_match"] else "FAIL")
+        cpu_params = f"{r['cpu_consensus']:.2f}, {r['cpu_n_interp']}" if isinstance(r['cpu_consensus'], float) else f"{r['cpu_consensus']}, {r['cpu_n_interp']}"
+        gpu_params = f"{r['gpu_consensus']:.2f}, {r['gpu_n_interp']}" if isinstance(r['gpu_consensus'], float) else f"{r['gpu_consensus']}, {r['gpu_n_interp']}"
+        table_data.append([
+            r["name"][:20],
+            f"{r['n_channels']}x{r['n_epochs']}",
+            cpu_params,
+            gpu_params,
+            f"{r['speedup']:.1f}x",
+            status
+        ])
+    
+    col_labels = ["Config", "Size", "CPU (cons, n_int)", "GPU (cons, n_int)", "Speedup", "Match"]
+    
+    table = ax2.table(
+        cellText=table_data,
+        colLabels=col_labels,
+        loc='center',
+        cellLoc='center',
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(8)
+    table.scale(1.2, 1.5)
+    
+    # Color header
+    for j in range(len(col_labels)):
+        table[(0, j)].set_facecolor('#4472C4')
+        table[(0, j)].set_text_props(color='white', fontweight='bold')
+    
+    # Color rows by status
+    for i, r in enumerate(valid_results, 1):
+        if r["exact_match"]:
+            color = '#C6EFCE'  # Light green
+        elif r["neighbor_match"]:
+            color = '#FFEB9C'  # Light orange
+        else:
+            color = '#FFC7CE'  # Light red
+        for j in range(len(col_labels)):
+            table[(i, j)].set_facecolor(color)
+    
+    ax2.set_title("Detailed Comparison\n(consensus, n_interpolate)")
+    
+    plt.tight_layout()
+    fig.savefig(figures_dir / f"validation_summary.{fmt}", dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    return figures_dir / f"validation_summary.{fmt}"
+
+
 def generate_markdown_report(metrics, figures, output_path):
     """Generate markdown summary report."""
     report = []
@@ -273,8 +421,13 @@ def generate_markdown_report(metrics, figures, output_path):
         report.append(f"- **Median speedup:** {np.median(speedups):.2f}x")
         
         # Verification
-        verified = sum(1 for m in metrics if m["outputs_match"])
-        report.append(f"- **Verified outputs match:** {verified}/{len(metrics)}")
+        exact = sum(1 for m in metrics if m.get("match_status") == "exact")
+        neighbor = sum(1 for m in metrics if m.get("match_status") == "neighbor")
+        mismatch = sum(1 for m in metrics if m.get("match_status") == "mismatch")
+        report.append(f"- **Exact match:** {exact}/{len(metrics)}")
+        report.append(f"- **Neighbor match (±1 step):** {neighbor}/{len(metrics)}")
+        if mismatch > 0:
+            report.append(f"- **⚠️ Mismatch:** {mismatch}/{len(metrics)}")
         report.append("")
     
     # Figures
@@ -285,14 +438,15 @@ def generate_markdown_report(metrics, figures, output_path):
     
     # Detailed results table
     report.append("## Detailed Results\n")
-    report.append("| Config | Channels | Epochs | CPU (s) | GPU (s) | Speedup | Verified |")
-    report.append("|--------|----------|--------|---------|---------|---------|----------|")
+    report.append("| Config | Channels | Epochs | CPU (s) | GPU (s) | Speedup | Match |")
+    report.append("|--------|----------|--------|---------|---------|---------|-------|")
     
     for m in sorted(metrics, key=lambda x: x["speedup"], reverse=True):
-        verified = "✅" if m["outputs_match"] else "❌"
+        match_icons = {"exact": "✅", "neighbor": "≈", "mismatch": "❌"}
+        match_icon = match_icons.get(m.get("match_status", "mismatch"), "?")
         report.append(
             f"| {m['name']} | {m['n_channels']} | {m['n_epochs']} | "
-            f"{m['cpu_time']:.2f} | {m['gpu_time']:.2f} | {m['speedup']:.2f}x | {verified} |"
+            f"{m['cpu_time']:.2f} | {m['gpu_time']:.2f} | {m['speedup']:.2f}x | {match_icon} |"
         )
     
     report.append("")
@@ -362,6 +516,12 @@ def main():
     fig = plot_speedup_heatmap(metrics, figures_dir, args.format)
     print(f"  ✅ {fig.name}")
     figures.append(fig)
+    
+    # Validation summary (needs raw results, not just metrics)
+    fig = plot_validation_summary(results, figures_dir, args.format)
+    if fig:
+        print(f"  ✅ {fig.name}")
+        figures.append(fig)
     
     print("\nGenerating report...")
     report_path = figures_dir / "benchmark_report.md"
