@@ -1052,12 +1052,16 @@ class AutoReject:
     picks_ : array-like, shape (n_data_channels,)
         The data channels considered by autoreject. By default
         only data channels, not already marked as bads are considered.
+    device : str
+        Compute device: 'auto' (default), 'gpu', 'mps', 'cuda', or 'cpu'.
+        When 'auto', GPU is used if available and beneficial for the data size.
     """
 
     def __init__(self, n_interpolate=None, consensus=None,
                  thresh_func=None, cv=10, picks=None,
                  thresh_method='bayesian_optimization',
-                 n_jobs=1, random_state=None, verbose=True):
+                 n_jobs=1, random_state=None, verbose=True,
+                 device='auto'):
         """Initialize the AutoReject class."""
         self.n_interpolate = n_interpolate
         self.consensus = consensus
@@ -1067,9 +1071,63 @@ class AutoReject:
         self.picks = picks
         self.n_jobs = n_jobs
         self.random_state = random_state
+        self.device = device
 
         if self.consensus is None:
             self.consensus = np.linspace(0, 1.0, 11)
+
+    def _should_use_gpu(self, epochs):
+        """Determine if GPU should be used based on device setting and data size.
+        
+        Parameters
+        ----------
+        epochs : mne.Epochs
+            The epochs to process.
+        
+        Returns
+        -------
+        use_gpu : bool
+            Whether to use GPU.
+        device : str
+            Device to use ('mps', 'cuda', or 'cpu').
+        """
+        # Handle backward compatibility for pickled objects without device attr
+        device = getattr(self, 'device', 'auto')
+        
+        if device == 'cpu':
+            return False, 'cpu'
+        
+        # Check if GPU is available
+        try:
+            from .gpu_pipeline import is_gpu_available, should_use_gpu
+            if not is_gpu_available():
+                return False, 'cpu'
+        except ImportError:
+            return False, 'cpu'
+        
+        n_epochs = len(epochs)
+        n_channels = len(self.picks_) if hasattr(self, 'picks_') else epochs.get_data().shape[1]
+        
+        if device == 'auto':
+            # Auto-detect: use GPU for larger datasets
+            return should_use_gpu(n_epochs, n_channels)
+        elif device in ('gpu', 'mps', 'cuda'):
+            # Force GPU
+            try:
+                import torch
+                if device == 'mps' and hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                    return True, 'mps'
+                elif device in ('gpu', 'cuda') and torch.cuda.is_available():
+                    return True, 'cuda'
+                elif device == 'gpu':
+                    # Try MPS if CUDA not available
+                    if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                        return True, 'mps'
+                return False, 'cpu'
+            except ImportError:
+                return False, 'cpu'
+        
+        return False, 'cpu'
 
     def __repr__(self):
         """repr."""
@@ -1139,6 +1197,9 @@ class AutoReject:
         if isinstance(self.cv_, int):
             self.cv_ = KFold(n_splits=self.cv_)
 
+        # Determine if we should use GPU
+        use_gpu, device = self._should_use_gpu(epochs)
+        
         # XXX : maybe use an mne function in pick.py ?
         picks_by_type = _get_picks_by_type(info=epochs.info, picks=self.picks_)
         ch_types = [ch_type for ch_type, _ in picks_by_type]
@@ -1149,10 +1210,20 @@ class AutoReject:
             this_info = mne.pick_info(epochs.info, meg_picks, copy=True)
             self.dots = _compute_dots(this_info, templates=None)
 
-        thresh_func = partial(_compute_thresholds, n_jobs=self.n_jobs,
-                              method=self.thresh_method,
-                              random_state=self.random_state,
-                              dots=self.dots)
+        # Choose threshold function based on device
+        if use_gpu:
+            from .gpu_pipeline import compute_thresholds_gpu
+            thresh_func = partial(compute_thresholds_gpu,
+                                  method=self.thresh_method,
+                                  random_state=self.random_state,
+                                  device=device)
+            if self.verbose:
+                print(f'Using GPU acceleration (device={device})')
+        else:
+            thresh_func = partial(_compute_thresholds, n_jobs=self.n_jobs,
+                                  method=self.thresh_method,
+                                  random_state=self.random_state,
+                                  dots=self.dots)
 
         if self.n_interpolate is None:
             if len(self.picks_) < 4:
@@ -1171,11 +1242,22 @@ class AutoReject:
         for ch_type, this_picks in picks_by_type:
             if self.verbose is not False:
                 print('Running autoreject on ch_type=%s' % ch_type)
-            this_local_reject, this_loss = \
-                _run_local_reject_cv(epochs, thresh_func, this_picks,
-                                     self.n_interpolate, self.cv_,
-                                     self.consensus, self.dots,
-                                     self.verbose, n_jobs=self.n_jobs)
+            
+            # Use GPU-accelerated CV if available
+            if use_gpu:
+                from .gpu_pipeline import run_local_reject_cv_gpu
+                this_local_reject, this_loss = \
+                    run_local_reject_cv_gpu(epochs, thresh_func, this_picks,
+                                            self.n_interpolate, self.cv_,
+                                            self.consensus, self.dots,
+                                            self.verbose, n_jobs=self.n_jobs,
+                                            device=device)
+            else:
+                this_local_reject, this_loss = \
+                    _run_local_reject_cv(epochs, thresh_func, this_picks,
+                                         self.n_interpolate, self.cv_,
+                                         self.consensus, self.dots,
+                                         self.verbose, n_jobs=self.n_jobs)
             self.threshes_.update(this_local_reject.threshes_)
 
             best_idx, best_jdx = \
@@ -1282,8 +1364,16 @@ class AutoReject:
         if reject_log is None:
             reject_log = self.get_reject_log(epochs)
         epochs_clean = epochs.copy()
-        _apply_interp(reject_log, epochs_clean, self.threshes_,
-                      self.picks_, self.dots, self.verbose)
+        
+        # Determine if we should use GPU for interpolation
+        use_gpu, device = self._should_use_gpu(epochs)
+        
+        if use_gpu:
+            _apply_interp_gpu(reject_log, epochs_clean, self.threshes_,
+                              self.picks_, device, self.verbose)
+        else:
+            _apply_interp(reject_log, epochs_clean, self.threshes_,
+                          self.picks_, self.dots, self.verbose)
 
         _apply_drop(reject_log, epochs_clean, self.threshes_, self.picks_,
                     self.verbose)
@@ -1351,6 +1441,57 @@ def _apply_interp(reject_log, epochs, threshes_, picks_, dots,
     _interpolate_bad_epochs(
         epochs, interp_channels=interp_channels,
         picks=picks_, dots=dots, verbose=verbose)
+
+
+def _apply_interp_gpu(reject_log, epochs, threshes_, picks_, device, verbose):
+    """Apply GPU-accelerated interpolation to epochs.
+    
+    Parameters
+    ----------
+    reject_log : RejectLog
+        The rejection log containing labels.
+    epochs : mne.Epochs
+        The epochs to interpolate (modified in-place).
+    threshes_ : dict
+        Fitted thresholds.
+    picks_ : array-like
+        Channel indices.
+    device : str
+        GPU device to use.
+    verbose : bool
+        Whether to show progress.
+    """
+    from .gpu_interpolation import gpu_interpolate_bad_epochs
+    from .utils import _pbar
+    import numpy as np
+    
+    _check_fit(epochs, threshes_, picks_)
+    interp_channels = _get_interp_chs(
+        reject_log.labels, reject_log.ch_names, picks_)
+    
+    # Convert channel names to indices within picks_
+    ch_name_to_pick_idx = {epochs.ch_names[p]: i for i, p in enumerate(picks_)}
+    interp_ch_indices = [
+        [ch_name_to_pick_idx[ch] for ch in epoch_chs if ch in ch_name_to_pick_idx]
+        for epoch_chs in interp_channels
+    ]
+    
+    # Check if any interpolation needed
+    if not any(len(chs) > 0 for chs in interp_ch_indices):
+        return
+    
+    # Get normalized positions for picked channels
+    pos = epochs._get_channel_positions(picks_)
+    pos_norms = np.linalg.norm(pos, axis=1, keepdims=True)
+    pos_normalized = pos / pos_norms
+    
+    # Run GPU interpolation
+    data_gpu = gpu_interpolate_bad_epochs(
+        epochs._data, interp_ch_indices, picks_, pos_normalized, device=device
+    )
+    
+    # Copy back to epochs (transfer from GPU)
+    epochs._data[:] = data_gpu.cpu().numpy()
 
 
 def _apply_drop(reject_log, epochs, threshes_, picks_,

@@ -934,12 +934,50 @@ class TorchBackend(BaseBackend):
         return self._maybe_wrap(result, keep_on_device)
     
     def median(self, data, axis=None, keep_on_device=False):
-        """Compute median using PyTorch."""
+        """Compute median using PyTorch.
+        
+        Note: torch.median behaves differently from numpy.median for arrays
+        with an even number of elements:
+        - numpy returns the average of the two middle values
+        - torch returns the lower of the two middle values
+        
+        This implementation matches numpy.median behavior for consistency
+        by using torch.sort and computing the average of the two middle values
+        for even-length arrays. This approach:
+        - Stays entirely on GPU (no CPU fallback needed)
+        - Has the same performance as torch.median
+        - Is numerically identical to numpy.median
+        """
         t = self._to_tensor(data)
+        
         if axis is None:
-            result = t.median()
+            # Flatten and compute median
+            t_flat = t.flatten()
+            n = t_flat.shape[0]
+            sorted_t, _ = self._torch.sort(t_flat)
+            
+            if n % 2 == 1:
+                # Odd: return middle element
+                result = sorted_t[n // 2]
+            else:
+                # Even: return average of two middle elements
+                result = (sorted_t[n // 2 - 1] + sorted_t[n // 2]) / 2
         else:
-            result = t.median(dim=axis).values
+            # Sort along the specified axis
+            n = t.shape[axis]
+            sorted_t, _ = self._torch.sort(t, dim=axis)
+            
+            if n % 2 == 1:
+                # Odd: return middle element
+                idx = n // 2
+                result = self._torch.select(sorted_t, axis, idx)
+            else:
+                # Even: return average of two middle elements
+                idx1, idx2 = n // 2 - 1, n // 2
+                v1 = self._torch.select(sorted_t, axis, idx1)
+                v2 = self._torch.select(sorted_t, axis, idx2)
+                result = (v1 + v2) / 2
+        
         return self._maybe_wrap(result, keep_on_device)
     
     def correlation(self, x, y, keep_on_device=False):

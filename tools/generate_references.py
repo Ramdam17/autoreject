@@ -57,7 +57,8 @@ def create_deterministic_epochs(n_epochs=30, n_channels=32, n_times=256,
     epochs : mne.EpochsArray
         Synthetic epochs with reproducible data.
     """
-    np.random.seed(seed)
+    # Use isolated RandomState to ensure reproducibility
+    rng = np.random.RandomState(seed)
     
     # Create channel info - use 1-based naming to avoid EEG000
     ch_names = [f'EEG{i:03d}' for i in range(1, n_channels + 1)]
@@ -81,10 +82,10 @@ def create_deterministic_epochs(n_epochs=30, n_channels=32, n_times=256,
     
     # Generate synthetic data with realistic properties
     # Base signal: random noise with some structure
-    data = np.random.randn(n_epochs, n_channels, n_times) * 20e-6  # 20 µV
+    data = rng.randn(n_epochs, n_channels, n_times) * 20e-6  # 20 µV
     
     # Add some correlated structure (simulating brain activity)
-    common_signal = np.random.randn(n_epochs, 1, n_times) * 5e-6
+    common_signal = rng.randn(n_epochs, 1, n_times) * 5e-6
     data += common_signal
     
     # Add some bad epochs (higher amplitude)
@@ -93,10 +94,10 @@ def create_deterministic_epochs(n_epochs=30, n_channels=32, n_times=256,
         data[idx] *= 3.0
     
     # Add some bad channels in specific epochs
-    data[3, 10, :] += np.random.randn(n_times) * 100e-6  # artifact
-    data[8, 5, :] += np.random.randn(n_times) * 80e-6
-    data[15, 20, :] += np.random.randn(n_times) * 90e-6
-    data[18, 15, :] += np.random.randn(n_times) * 120e-6
+    data[3, 10, :] += rng.randn(n_times) * 100e-6  # artifact
+    data[8, 5, :] += rng.randn(n_times) * 80e-6
+    data[15, 20, :] += rng.randn(n_times) * 90e-6
+    data[18, 15, :] += rng.randn(n_times) * 120e-6
     
     # Create events
     events = np.column_stack([

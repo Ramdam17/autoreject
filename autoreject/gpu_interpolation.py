@@ -17,6 +17,7 @@ __all__ = [
     'gpu_make_interpolation_matrix',
     'gpu_do_interp_dots',
     'gpu_interpolate_bads_eeg',
+    'gpu_interpolate_bad_epochs',
     'legval_torch',
 ]
 
@@ -592,6 +593,123 @@ def benchmark_interpolation_gpu(n_epochs=100, n_channels=64, n_times=1000, n_ite
         'gpu_ms': gpu_time,
         'speedup': cpu_time / gpu_time
     }
+
+
+def gpu_interpolate_bad_epochs(data, interp_channels, picks, pos, device=None):
+    """GPU-accelerated interpolation for epochs with per-epoch bad channels.
+    
+    This is a GPU version of _interpolate_bad_epochs that keeps all data
+    on GPU throughout the interpolation process.
+    
+    Parameters
+    ----------
+    data : np.ndarray, shape (n_epochs, n_channels_total, n_times)
+        The epoch data to interpolate.
+    interp_channels : list of list of int
+        For each epoch, list of channel INDICES (within picks) to interpolate.
+    picks : np.ndarray
+        Channel indices that were picked.
+    pos : np.ndarray, shape (n_picks, 3)
+        3D positions of picked channels, normalized to unit vectors.
+    device : str or torch.device, optional
+        Device to run on.
+        
+    Returns
+    -------
+    torch.Tensor
+        Interpolated data on GPU, shape (n_epochs, n_channels_total, n_times).
+    """
+    import torch
+    
+    backend = get_backend()
+    if backend.name != 'torch':
+        raise RuntimeError("gpu_interpolate_bad_epochs requires torch backend")
+    
+    if device is None:
+        device = backend.device
+    
+    n_epochs, n_channels_total, n_times = data.shape
+    n_picks = len(picks)
+    picks = np.asarray(picks)  # Ensure picks is numpy array
+    
+    # Transfer data to GPU once
+    if isinstance(data, torch.Tensor):
+        data_gpu = data.clone()
+    else:
+        data_gpu = torch.tensor(data, dtype=torch.float32, device=device)
+    
+    # Pre-compute positions tensor
+    pos_t = torch.tensor(pos, dtype=torch.float32, device=device)
+    
+    # Pre-compute full G matrix for all positions (n_picks x n_picks)
+    cosang_all = pos_t @ pos_t.T
+    G_all = _calc_g_torch(cosang_all)
+    
+    # Cache interpolation matrices to avoid recomputing for same bad channel patterns
+    interp_cache = {}
+    
+    for epoch_idx, bad_ch_indices in enumerate(interp_channels):
+        if len(bad_ch_indices) == 0:
+            continue
+        
+        # Create cache key from bad channel pattern
+        cache_key = tuple(sorted(bad_ch_indices))
+        
+        if cache_key not in interp_cache:
+            # Create masks for good/bad channels
+            goods_mask = np.ones(n_picks, dtype=bool)
+            for bad_idx in bad_ch_indices:
+                goods_mask[bad_idx] = False
+            bads_mask = ~goods_mask
+            
+            # Get indices of good and bad channels within picks
+            good_idx_in_picks = np.where(goods_mask)[0]
+            bad_idx_in_picks = np.where(bads_mask)[0]
+            
+            # Create torch index tensors for GPU operations on G matrix
+            good_idx_t = torch.tensor(good_idx_in_picks, device=device, dtype=torch.long)
+            bad_idx_t = torch.tensor(bad_idx_in_picks, device=device, dtype=torch.long)
+            
+            # Extract submatrices from pre-computed G using advanced indexing
+            G_from = G_all[good_idx_t][:, good_idx_t]
+            G_to_from = G_all[bad_idx_t][:, good_idx_t]
+            
+            # Add regularization
+            n_from = len(good_idx_in_picks)
+            G_from_reg = G_from + 1e-5 * torch.eye(n_from, device=device, dtype=torch.float32)
+            
+            # Build C matrix and compute pseudo-inverse
+            ones_col = torch.ones((n_from, 1), device=device, dtype=torch.float32)
+            ones_row = torch.ones((1, n_from), device=device, dtype=torch.float32)
+            zero = torch.zeros((1, 1), device=device, dtype=torch.float32)
+            
+            C = torch.cat([
+                torch.cat([G_from_reg, ones_col], dim=1),
+                torch.cat([ones_row, zero], dim=1)
+            ], dim=0)
+            
+            C_inv = torch.linalg.pinv(C)
+            
+            # Compute interpolation matrix (n_bad, n_good)
+            n_bad = len(bad_idx_in_picks)
+            ones_to = torch.ones((n_bad, 1), device=device, dtype=torch.float32)
+            interpolation = torch.cat([G_to_from, ones_to], dim=1) @ C_inv[:, :-1]
+            
+            # Store original picks for good and bad channels (in full data indexing)
+            good_picks = picks[goods_mask]
+            bad_picks = picks[bads_mask]
+            
+            interp_cache[cache_key] = (interpolation, good_picks, bad_picks)
+        
+        interpolation, good_picks, bad_picks = interp_cache[cache_key]
+        
+        # Apply interpolation for this epoch
+        # (n_bad, n_good) @ (n_good, n_times) -> (n_bad, n_times)
+        good_data = data_gpu[epoch_idx, good_picks, :]
+        interpolated = interpolation @ good_data
+        data_gpu[epoch_idx, bad_picks, :] = interpolated
+    
+    return data_gpu
 
 
 if __name__ == '__main__':

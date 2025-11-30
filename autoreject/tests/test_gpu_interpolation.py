@@ -7,8 +7,32 @@ import os
 # Skip all tests if torch is not available
 torch = pytest.importorskip("torch")
 
-# Set backend to torch before importing
-os.environ['AUTOREJECT_BACKEND'] = 'torch'
+from autoreject.backends import clear_backend_cache, get_backend, is_device_array
+
+
+@pytest.fixture(autouse=True)
+def setup_torch_backend():
+    """Force torch backend for all tests in this module.
+    
+    Saves and restores the original AUTOREJECT_BACKEND environment variable
+    to avoid polluting other test modules.
+    """
+    # Save original value
+    original_backend = os.environ.get('AUTOREJECT_BACKEND')
+    
+    # Set torch for these tests
+    os.environ['AUTOREJECT_BACKEND'] = 'torch'
+    clear_backend_cache()
+    
+    yield
+    
+    # Restore original value (not just delete!)
+    if original_backend is None:
+        os.environ.pop('AUTOREJECT_BACKEND', None)
+    else:
+        os.environ['AUTOREJECT_BACKEND'] = original_backend
+    clear_backend_cache()
+
 
 from autoreject.gpu_interpolation import (
     legval_torch,
@@ -17,7 +41,6 @@ from autoreject.gpu_interpolation import (
     gpu_make_interpolation_matrix,
     gpu_do_interp_dots,
 )
-from autoreject.backends import get_backend, is_device_array
 
 
 class TestLegvalTorch:
