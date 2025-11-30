@@ -42,3 +42,4 @@ venv/
 
 # Python cache
 __pycache__/
+junit-results.xml
