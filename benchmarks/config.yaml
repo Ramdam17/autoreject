@@ -12,7 +12,7 @@ machine:
 # Each combination will be tested
 parameters:
   # Number of EEG channels
-  channels: [32, 64, 128]  # 256 commented out - very slow on CPU
+  channels: [32, 64, 128, 256]  # 256ch: very slow on CPU but important for HD-EEG
   
   # Sampling frequency (Hz)
   sfreq: [250, 500]
@@ -79,6 +79,17 @@ subset_configs:
     n_interpolate: aggressive
     consensus: standard
     artifact_pct: 0.3
+    
+  # Ultra high-density EEG (256 channels)
+  - name: "ultrahd_256ch"
+    channels: 256
+    sfreq: 500
+    epoch_duration: 2.0
+    recording_duration: 10
+    cv_folds: 10
+    n_interpolate: aggressive
+    consensus: standard
+    artifact_pct: 0.3
   
   # Scaling test: vary channels
   - name: "scaling_32ch"
@@ -103,6 +114,16 @@ subset_configs:
     
   - name: "scaling_128ch"
     channels: 128
+    sfreq: 500
+    epoch_duration: 2.0
+    recording_duration: 10
+    cv_folds: 10
+    n_interpolate: medium
+    consensus: standard
+    artifact_pct: 0.3
+    
+  - name: "scaling_256ch"
+    channels: 256
     sfreq: 500
     epoch_duration: 2.0
     recording_duration: 10
