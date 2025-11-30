@@ -552,7 +552,7 @@ class _AutoReject(BaseAutoReject):
 
     def __init__(self, n_interpolate=0, consensus=0.1, thresh_func=None,
                  picks=None, thresh_method='bayesian_optimization', dots=None,
-                 verbose=True):
+                 verbose=True, device=None):
         """Init it."""
         if thresh_func is None:
             thresh_func = _compute_thresholds
@@ -565,6 +565,7 @@ class _AutoReject(BaseAutoReject):
         self.picks = picks
         self.verbose = verbose
         self.dots = dots
+        self.device = device  # None = CPU, 'mps'/'cuda' = GPU
 
     def __repr__(self):
         """repr."""
@@ -613,13 +614,41 @@ class _AutoReject(BaseAutoReject):
 
     def _get_epochs_interpolation(self, epochs, labels,
                                   picks, n_interpolate,
-                                  verbose=True):
-        """Interpolate the bad epochs."""
+                                  verbose=True, data=None):
+        """Interpolate the bad epochs.
+        
+        Parameters
+        ----------
+        epochs : mne.Epochs
+            The epochs object.
+        labels : ndarray
+            Label array (0=good, 1=bad).
+        picks : array-like
+            Channel indices to process.
+        n_interpolate : int
+            Maximum number of channels to interpolate.
+        verbose : bool
+            Verbosity.
+        data : ndarray or None
+            Pre-extracted data array (n_epochs, n_channels, n_times).
+            If provided, avoids expensive epochs[idx].get_data() calls.
+        """
         # 1: bad segment, # 2: interpolated
         assert labels.shape[0] == len(epochs)
         assert labels.shape[1] == len(epochs.ch_names)
         labels = labels.copy()
         non_picks = np.setdiff1d(range(epochs.info['nchan']), picks)
+        
+        # Pre-compute data for all epochs if we'll need it for PTP computation
+        # This avoids repeated epochs[idx].get_data() calls
+        data_local = data
+        if data_local is None:
+            # Check if any epoch needs PTP computation (n_bads > n_interpolate)
+            n_bads_per_epoch = np.sum(labels[:, picks] == 1, axis=1)
+            needs_ptp = np.any(n_bads_per_epoch > n_interpolate)
+            if needs_ptp:
+                data_local = epochs.get_data(**_GDKW)
+        
         for epoch_idx in range(len(epochs)):
             n_bads = labels[epoch_idx, picks].sum()
             if n_bads == 0:
@@ -629,9 +658,13 @@ class _AutoReject(BaseAutoReject):
                     interp_chs_mask = labels[epoch_idx] == 1
                 else:
                     # get peak-to-peak for channels in that epoch
-                    data = epochs[epoch_idx].get_data(**_GDKW)[0]
+                    if data_local is not None:
+                        epoch_data = data_local[epoch_idx]
+                    else:
+                        # Fallback: should not happen if needs_ptp logic is correct
+                        epoch_data = epochs[epoch_idx].get_data(**_GDKW)[0]
                     backend = get_backend()
-                    peaks = backend.ptp(data, axis=-1)
+                    peaks = backend.ptp(epoch_data, axis=-1)
                     peaks[non_picks] = -np.inf
                     # find channels which are bad by rejection threshold
                     interp_chs_mask = labels[epoch_idx] == 1
@@ -749,9 +782,12 @@ class _AutoReject(BaseAutoReject):
             reject_log.labels, reject_log.ch_names, this_picks)
 
         # interpolate copy to compute the clean .mean_
+        # Use GPU if device is set
+        use_gpu = self.device is not None and self.device != 'cpu'
         _interpolate_bad_epochs(
             epochs_copy, interp_channels=interp_channels,
-            picks=self.picks_, verbose=self.verbose)
+            picks=self.picks_, verbose=self.verbose,
+            use_gpu=use_gpu, device=self.device)
         self.mean_ = _slicemean(
             epochs_copy.get_data(**_GDKW),
             np.nonzero(np.invert(reject_log.bad_epochs))[0], axis=0)
@@ -828,8 +864,70 @@ def _interpolate_single_epoch(epoch_data, info, interp_chs, dots, picks):
     return epoch._data[0]
 
 
+def _interpolate_bad_epochs_gpu(epochs, interp_channels, picks, device=None, verbose=True):
+    """GPU-accelerated epoch interpolation - works on arrays directly.
+    
+    This is a fast alternative to _interpolate_bad_epochs that:
+    1. Works directly on numpy arrays (no MNE indexing/copying)
+    2. Uses cached interpolation matrices
+    3. Modifies epochs._data in-place
+    
+    Parameters
+    ----------
+    epochs : mne.Epochs
+        The epochs to interpolate (modified in-place).
+    interp_channels : list of list of str
+        For each epoch, list of channel names to interpolate.
+    picks : array-like
+        Channel indices to consider.
+    device : str or None
+        GPU device to use.
+    verbose : bool
+        Whether to show progress bar.
+    """
+    from .gpu_interpolation import gpu_interpolate_bad_epochs
+    from .backends import get_backend
+    
+    backend = get_backend()
+    if backend.name != 'torch':
+        raise RuntimeError("_interpolate_bad_epochs_gpu requires torch backend")
+    
+    if device is None:
+        device = backend.device
+    
+    picks = np.asarray(picks)
+    n_picks = len(picks)
+    
+    # Get positions for picked channels
+    pos = epochs._get_channel_positions(picks)
+    # Normalize positions
+    norms = np.linalg.norm(pos, axis=1, keepdims=True)
+    pos = pos / norms
+    
+    # Build ch_name to pick_idx mapping
+    ch_name_to_pick_idx = {epochs.ch_names[p]: i for i, p in enumerate(picks)}
+    
+    # Convert channel names to indices within picks
+    interp_ch_indices = []
+    for epoch_chs in interp_channels:
+        ch_indices = [ch_name_to_pick_idx[ch] for ch in epoch_chs if ch in ch_name_to_pick_idx]
+        interp_ch_indices.append(ch_indices)
+    
+    # Get full data
+    data = epochs._data  # (n_epochs, n_channels, n_times)
+    
+    # GPU interpolation - returns tensor
+    data_gpu = gpu_interpolate_bad_epochs(
+        data, interp_ch_indices, picks, pos, device=device
+    )
+    
+    # Copy back to epochs (only picked channels were interpolated)
+    epochs._data = data_gpu.cpu().numpy()
+
+
 def _interpolate_bad_epochs(
-        epochs, interp_channels, picks, dots=None, verbose=True, n_jobs=1):
+        epochs, interp_channels, picks, dots=None, verbose=True, n_jobs=1, 
+        use_gpu=False, device=None):
     """Actually do the interpolation.
     
     Parameters
@@ -846,8 +944,23 @@ def _interpolate_bad_epochs(
         Whether to show progress bar.
     n_jobs : int
         Number of parallel jobs. Default 1 (sequential).
+    use_gpu : bool
+        If True, use GPU-accelerated interpolation.
+    device : str or None
+        GPU device to use when use_gpu=True.
     """
     assert len(epochs) == len(interp_channels)
+    
+    # Try GPU path if requested
+    if use_gpu:
+        try:
+            _interpolate_bad_epochs_gpu(epochs, interp_channels, picks, 
+                                        device=device, verbose=verbose)
+            return
+        except Exception as e:
+            if verbose:
+                print(f"GPU interpolation failed, falling back to CPU: {e}")
+    
     pos = 2
     
     # Check if we can parallelize (n_jobs > 1 and enough epochs)

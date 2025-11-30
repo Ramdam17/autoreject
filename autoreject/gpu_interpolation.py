@@ -429,11 +429,108 @@ def gpu_interpolate_bads_eeg(inst, picks=None, keep_on_device=True):
         return None
 
 
+# Global cache for LOOCV interpolation matrices
+# Key: tuple of channel positions hash, Value: (interpolation_matrices, good_picks_list)
+_LOOCV_INTERP_CACHE = {}
+
+
+def _get_loocv_interp_matrices(pos, picks, device, compute_device, compute_dtype, data_dtype):
+    """Get or compute cached LOOCV interpolation matrices.
+    
+    For LOOCV (leave-one-out cross-validation), each channel is interpolated
+    from all other channels. The interpolation matrices depend ONLY on channel
+    geometry, not on the data. So we compute them once and cache them.
+    
+    Parameters
+    ----------
+    pos : np.ndarray, shape (n_picks, 3)
+        Normalized channel positions.
+    picks : np.ndarray
+        Channel indices.
+    device : torch.device
+        Target device for data operations.
+    compute_device : torch.device
+        Device for matrix computation (CPU for MPS, device for CUDA).
+    compute_dtype : torch.dtype
+        Dtype for matrix computation (float64).
+    data_dtype : torch.dtype
+        Dtype for data operations.
+        
+    Returns
+    -------
+    interp_matrices : torch.Tensor, shape (n_picks, n_picks)
+        Interpolation weight matrix. interp_matrices[i, j] = weight for
+        interpolating channel i from channel j. Diagonal is 0.
+    """
+    import torch
+    
+    # Create cache key from positions (hash of flattened array)
+    cache_key = (pos.tobytes(), str(device), str(data_dtype))
+    
+    if cache_key in _LOOCV_INTERP_CACHE:
+        return _LOOCV_INTERP_CACHE[cache_key]
+    
+    n_picks = len(picks)
+    
+    # Normalize positions and compute full G matrix
+    pos_t = torch.tensor(pos, dtype=compute_dtype, device=compute_device)
+    norms = torch.norm(pos_t, dim=1, keepdim=True)
+    pos_t = pos_t / norms
+    
+    cosang_all = pos_t @ pos_t.T
+    G_all = _calc_g_torch(cosang_all)
+    
+    # Build full interpolation matrix (n_picks, n_picks)
+    # interp_matrices[i, j] = weight for interpolating channel i from channel j
+    interp_matrices = torch.zeros((n_picks, n_picks), dtype=data_dtype, device=device)
+    
+    # For each channel being interpolated
+    for bad_idx in range(n_picks):
+        # Good channels = all except bad_idx
+        good_mask = torch.ones(n_picks, dtype=torch.bool, device=compute_device)
+        good_mask[bad_idx] = False
+        good_idx = torch.where(good_mask)[0]
+        
+        # Extract G submatrices
+        G_from = G_all[good_idx][:, good_idx]
+        G_to_from = G_all[bad_idx:bad_idx+1, good_idx]  # (1, n_good)
+        
+        # Add regularization
+        n_from = len(good_idx)
+        G_from_reg = G_from + 1e-5 * torch.eye(n_from, device=compute_device, dtype=compute_dtype)
+        
+        # Build C matrix and compute pseudo-inverse
+        ones_col = torch.ones((n_from, 1), device=compute_device, dtype=compute_dtype)
+        ones_row = torch.ones((1, n_from), device=compute_device, dtype=compute_dtype)
+        zero = torch.zeros((1, 1), device=compute_device, dtype=compute_dtype)
+        
+        C = torch.cat([
+            torch.cat([G_from_reg, ones_col], dim=1),
+            torch.cat([ones_row, zero], dim=1)
+        ], dim=0)
+        
+        C_inv = torch.linalg.pinv(C)
+        
+        # Interpolation weights for this channel: (1, n_good)
+        ones_to = torch.ones((1, 1), device=compute_device, dtype=compute_dtype)
+        weights = torch.cat([G_to_from, ones_to], dim=1) @ C_inv[:, :-1]
+        weights = weights.to(device=device, dtype=data_dtype)
+        
+        # Store in matrix: interp_matrices[bad_idx, good_idx] = weights
+        interp_matrices[bad_idx, good_idx.to(device)] = weights.squeeze(0)
+    
+    _LOOCV_INTERP_CACHE[cache_key] = interp_matrices
+    return interp_matrices
+
+
 def gpu_clean_by_interp(inst, picks=None, device=None, verbose=True):
     """Clean epochs/evoked by LOOCV interpolation on GPU.
     
     GPU-accelerated version of clean_by_interp that keeps data on GPU
     throughout the entire interpolation process.
+    
+    OPTIMIZED: Pre-computes and caches ALL interpolation matrices once,
+    then applies them in a single batch matrix multiply.
     
     Parameters
     ----------
@@ -453,8 +550,7 @@ def gpu_clean_by_interp(inst, picks=None, device=None, verbose=True):
     """
     import torch
     import mne
-    from mne import pick_channels
-    from .utils import _handle_picks, _pbar, _get_epochs_type
+    from .utils import _handle_picks, _get_epochs_type
     
     backend = get_backend()
     if backend.name != 'torch':
@@ -465,93 +561,60 @@ def gpu_clean_by_interp(inst, picks=None, device=None, verbose=True):
     
     picks = _handle_picks(info=inst.info, picks=picks)
     BaseEpochs = _get_epochs_type()
-    ch_names = [inst.info['ch_names'][p] for p in picks]
     
-    # Determine compute strategy based on device type
-    # CUDA: float64 on device for everything (bit-exact with CPU)
-    # MPS: float64 on CPU for pinv, float32 for data matmul
+    # Determine compute strategy
     use_cuda = is_cuda_device(device)
     
     if use_cuda:
-        # CUDA: everything in float64 on device
         compute_device = device
         compute_dtype = torch.float64
         data_dtype = torch.float64
     else:
-        # MPS or CPU: compute on CPU in float64, data in float32 for MPS
         compute_device = 'cpu'
         compute_dtype = torch.float64
         data_dtype = torch.float32 if device == 'mps' else torch.float64
     
-    # Transfer data to GPU once with appropriate dtype
-    data_gpu = torch.tensor(inst._data, dtype=data_dtype, device=device)
-    result_gpu = data_gpu.clone()
-    
-    # Pre-compute positions and normalize once
+    # Get positions
     pos_all = inst._get_channel_positions(picks)
-    pos_all_t = torch.tensor(pos_all, dtype=compute_dtype, device=compute_device)
-    pos_all_t = _normalize_vectors_torch(pos_all_t)
     
-    # Pre-compute G matrix for all positions
-    cosang_all = pos_all_t @ pos_all_t.T
-    G_all = _calc_g_torch(cosang_all)
+    # Get cached interpolation matrices (or compute if not cached)
+    if verbose:
+        print("  Computing/loading LOOCV interpolation matrices...", end=" ", flush=True)
+    interp_matrices = _get_loocv_interp_matrices(
+        pos_all, picks, device, compute_device, compute_dtype, data_dtype
+    )
+    if verbose:
+        print("done.")
     
-    mesg = 'Creating augmented epochs (GPU)'
-    for ch_idx, (pick, ch) in enumerate(_pbar(list(zip(picks, ch_names)),
-                                        desc=mesg, verbose=verbose)):
-        # Find the index of this channel in picks
-        pick_in_picks = np.where(picks == pick)[0][0]
+    # Transfer data to GPU
+    data_gpu = torch.tensor(inst._data, dtype=data_dtype, device=device)
+    
+    # Apply interpolation in ONE batch operation
+    # For epochs: data_gpu is (n_epochs, n_channels, n_times)
+    # For evoked: data_gpu is (n_channels, n_times)
+    
+    if isinstance(inst, BaseEpochs):
+        # Epochs: (n_epochs, n_channels, n_times)
+        # Extract picked channels
+        data_picks = data_gpu[:, picks, :]  # (n_epochs, n_picks, n_times)
         
-        # Create goods_idx (all True except current channel)
-        goods_mask = torch.ones(len(picks), dtype=torch.bool, device=device)
-        goods_mask[pick_in_picks] = False
+        # Apply interpolation: result[e, i, t] = sum_j(interp[i,j] * data[e,j,t])
+        # interp_matrices: (n_picks, n_picks), data_picks: (n_epochs, n_picks, n_times)
+        # Use einsum: 'ij,ejt->eit' 
+        result_picks = torch.einsum('ij,ejt->eit', interp_matrices, data_picks)
         
-        # Get positions for good and bad channels
-        pos_good_idx = goods_mask.cpu().numpy()
-        pos_bad_idx = ~goods_mask.cpu().numpy()
+        # Put back into full data
+        result_gpu = data_gpu.clone()
+        result_gpu[:, picks, :] = result_picks
+    else:
+        # Evoked: (n_channels, n_times)
+        data_picks = data_gpu[picks, :]  # (n_picks, n_times)
         
-        # Extract submatrices from pre-computed G
-        G_from = G_all[pos_good_idx][:, pos_good_idx]
-        G_to_from = G_all[pos_bad_idx][:, pos_good_idx]
+        # Apply interpolation: result[i, t] = sum_j(interp[i,j] * data[j,t])
+        result_picks = interp_matrices @ data_picks  # (n_picks, n_times)
         
-        # Add regularization
-        alpha = 1e-5
-        n_from = G_from.shape[0]
-        G_from_reg = G_from + alpha * torch.eye(n_from, device=compute_device, dtype=compute_dtype)
-        
-        # Build C matrix and compute pseudo-inverse
-        ones_col = torch.ones((n_from, 1), device=compute_device, dtype=compute_dtype)
-        ones_row = torch.ones((1, n_from), device=compute_device, dtype=compute_dtype)
-        zero = torch.zeros((1, 1), device=compute_device, dtype=compute_dtype)
-        
-        C = torch.cat([
-            torch.cat([G_from_reg, ones_col], dim=1),
-            torch.cat([ones_row, zero], dim=1)
-        ], dim=0)
-        
-        C_inv = torch.linalg.pinv(C)
-        
-        # Compute interpolation matrix
-        ones_to = torch.ones((1, 1), device=compute_device, dtype=compute_dtype)
-        interpolation = torch.cat([G_to_from, ones_to], dim=1) @ C_inv[:, :-1]
-        # Move to target device with appropriate dtype
-        interpolation = interpolation.to(device=device, dtype=data_dtype)
-        
-        # Get picks for good channels in the original data
-        good_picks = picks[pos_good_idx]
-        
-        # Apply interpolation
-        if isinstance(inst, mne.Evoked):
-            # (1, n_good) @ (n_good, n_times) -> (1, n_times)
-            good_data = data_gpu[good_picks, :]
-            interpolated = interpolation @ good_data
-            result_gpu[pick, :] = interpolated.squeeze(0)
-        elif isinstance(inst, BaseEpochs):
-            # For epochs: (n_epochs, n_good, n_times)
-            good_data = data_gpu[:, good_picks, :]
-            # (1, n_good) @ (n_epochs, n_good, n_times) -> (n_epochs, 1, n_times)
-            interpolated = torch.einsum('bg,egt->ebt', interpolation, good_data)
-            result_gpu[:, pick, :] = interpolated.squeeze(1)
+        result_gpu = data_gpu.clone()
+        result_gpu[picks, :] = result_picks
     
     return DeviceArray(result_gpu, backend='torch', device=str(device))
 
