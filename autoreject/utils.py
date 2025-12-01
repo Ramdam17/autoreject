@@ -334,6 +334,10 @@ def _interpolate_bads_eeg(inst, picks=None):
         warn('Your spherical fit is poor, interpolation results are '
              'likely to be inaccurate.')
 
+    # Center positions around sphere origin (like MNE does)
+    pos_good = pos_good - center
+    pos_bad = pos_bad - center
+
     logger.info('Computing interpolation matrix from {0} sensor '
                 'positions'.format(len(pos_good)))
 

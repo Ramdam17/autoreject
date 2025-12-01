@@ -828,10 +828,13 @@ def run_local_reject_cv_gpu(epochs, thresh_func, picks_, n_interpolate, cv,
         X_gpu = optimizer._to_tensor(X_full)
         
         # Pre-compute positions for GPU interpolation
+        # Center around sphere origin (like MNE does) then normalize
+        from mne.bem import _fit_sphere
         pos = epochs._get_channel_positions(picks_)
-        # Normalize positions to unit vectors
-        norms = np.linalg.norm(pos, axis=1, keepdims=True)
-        pos_normalized = pos / norms
+        radius, center = _fit_sphere(pos)
+        pos_centered = pos - center
+        norms = np.linalg.norm(pos_centered, axis=1, keepdims=True)
+        pos_normalized = pos_centered / norms
     
     # Pre-compute CV splits once
     cv_splits = list(cv.split(np.zeros(len(epochs))))
@@ -1053,8 +1056,11 @@ def run_local_reject_cv_gpu_batch(epochs, thresh_func, picks_, n_interpolate, cv
     if verbose:
         print(f"  Phase 2: GPU batch interpolation ({n_interp_values} n_interp values)...")
     
-    # Pre-compute positions
+    # Pre-compute positions and center around sphere origin (like MNE does)
+    from mne.bem import _fit_sphere
     pos = epochs._get_channel_positions(picks_)
+    radius, center = _fit_sphere(pos)
+    pos = pos - center
     
     # Use the new batch interpolation function
     from .gpu_interpolation import gpu_batch_interpolate_all_n_interp

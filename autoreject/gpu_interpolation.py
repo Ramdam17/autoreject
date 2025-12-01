@@ -268,7 +268,7 @@ def gpu_make_interpolation_matrix(pos_from, pos_to, alpha=1e-5, device=None):
     # MPS: convert to float32 for efficient matmul
     interpolation = interpolation.to(device=device, dtype=output_dtype)
     
-    return DeviceArray(interpolation, backend='torch', device=str(device))
+    return DeviceArray(interpolation, backend, str(device))
 
 
 def gpu_do_interp_dots(data, interpolation, goods_idx, bads_idx, keep_on_device=True):
@@ -345,7 +345,7 @@ def gpu_do_interp_dots(data, interpolation, goods_idx, bads_idx, keep_on_device=
     data_tensor[..., bads_idx_t, :] = interpolated
     
     if keep_on_device:
-        return DeviceArray(data_tensor, backend='torch', device=str(device))
+        return DeviceArray(data_tensor, backend, str(device))
     else:
         return data_tensor.cpu().numpy()
 
@@ -394,8 +394,8 @@ def gpu_interpolate_bads_eeg(inst, picks=None, keep_on_device=True):
         if keep_on_device:
             return DeviceArray(
                 torch.tensor(inst._data, dtype=torch.float32, device=device),
-                backend='torch',
-                device=str(device)
+                backend,
+                str(device)
             )
         return None
     
@@ -409,6 +409,11 @@ def gpu_interpolate_bads_eeg(inst, picks=None, keep_on_device=True):
     goods_idx_pos = goods_idx[picks]
     pos_good = pos[goods_idx_pos]
     pos_bad = pos[bads_idx_pos]
+    
+    # Fit sphere and center positions (like MNE does)
+    radius, center = _fit_sphere(pos_good)
+    pos_good = pos_good - center
+    pos_bad = pos_bad - center
     
     # Compute interpolation matrix on GPU
     interpolation = gpu_make_interpolation_matrix(pos_good, pos_bad, device=device)
@@ -574,8 +579,11 @@ def gpu_clean_by_interp(inst, picks=None, device=None, verbose=True):
         compute_dtype = torch.float64
         data_dtype = torch.float32 if device == 'mps' else torch.float64
     
-    # Get positions
+    # Get positions and center around sphere origin (like MNE does)
+    from mne.bem import _fit_sphere
     pos_all = inst._get_channel_positions(picks)
+    radius, center = _fit_sphere(pos_all)
+    pos_all = pos_all - center
     
     # Get cached interpolation matrices (or compute if not cached)
     if verbose:
@@ -616,7 +624,7 @@ def gpu_clean_by_interp(inst, picks=None, device=None, verbose=True):
         result_gpu = data_gpu.clone()
         result_gpu[picks, :] = result_picks
     
-    return DeviceArray(result_gpu, backend='torch', device=str(device))
+    return DeviceArray(result_gpu, backend, str(device))
 
 
 def benchmark_interpolation_gpu(n_epochs=100, n_channels=64, n_times=1000, n_iters=3):
