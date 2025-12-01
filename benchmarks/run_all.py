@@ -101,6 +101,7 @@ def main():
     parser.add_argument("--parallel", type=int, default=1, help="Number of parallel runs")
     parser.add_argument("--filter", type=str, help="Only run configs matching pattern")
     parser.add_argument("--config-file", type=str, default="config.yaml", help="Config file")
+    parser.add_argument("--log-file", type=str, default="full_initial_run.log", help="Main run log filename")
     
     args = parser.parse_args()
     
@@ -216,7 +217,7 @@ def main():
                 print(f"  - {r['name']}: {error[:100]}")
     
     # Save run log
-    log_file = script_dir / f"orchestrator_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    log_file = script_dir / args.log_file
     with open(log_file, 'w') as f:
         json.dump({
             "start_time": start_time.isoformat(),

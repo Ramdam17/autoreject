@@ -343,7 +343,7 @@ def create_synthetic_data(n_channels, sfreq, epoch_duration, recording_duration,
 
 
 def run_benchmark(config, logger):
-    """Run a single benchmark (CPU and GPU)."""
+    """Run a single benchmark (CPU Legacy, CPU Current, and GPU)."""
     import mne
     mne.set_log_level('ERROR')
     
@@ -357,6 +357,14 @@ def run_benchmark(config, logger):
     except ImportError:
         has_loocv_cache = False
         _LOOCV_INTERP_CACHE = {}
+    
+    # Import legacy module for CPU Legacy benchmark
+    try:
+        from legacy import utils_original
+        has_legacy = True
+    except ImportError:
+        has_legacy = False
+        logger.warning("Legacy module not found, skipping CPU Legacy benchmark")
     
     results = {
         "config": config,
@@ -397,9 +405,73 @@ def run_benchmark(config, logger):
     logger.info(f"  Created {data_info['n_epochs']} epochs × {data_info['n_channels']} channels")
     logger.info(f"  Data size: {data_info['data_size_mb']:.1f} MB")
     
-    # ========== CPU Benchmark ==========
+    # ========== CPU Legacy Benchmark ==========
+    if has_legacy:
+        logger.info("=" * 60)
+        logger.info("Running CPU Legacy benchmark (original utils.py)...")
+        
+        os.environ['AUTOREJECT_BACKEND'] = 'numpy'
+        clear_backend_cache()
+        if has_loocv_cache:
+            _LOOCV_INTERP_CACHE.clear()
+        
+        # Monkey-patch to use legacy interpolation
+        import autoreject.utils as utils_module
+        original_interpolate = utils_module._interpolate_bads_eeg
+        utils_module._interpolate_bads_eeg = utils_original._interpolate_bads_eeg
+        
+        ar_legacy = AutoReject(
+            n_interpolate=n_interpolate,
+            consensus=consensus,
+            cv=config["cv_folds"],
+            random_state=config.get("random_state", 42),
+            n_jobs=1,
+            verbose=True,
+            device='cpu'
+        )
+        
+        tracemalloc.start()
+        start_time = time.perf_counter()
+        try:
+            ar_legacy.fit(epochs)
+            legacy_time = time.perf_counter() - start_time
+            legacy_success = True
+            legacy_error = None
+        except Exception as e:
+            legacy_time = time.perf_counter() - start_time
+            legacy_success = False
+            legacy_error = str(e)
+            logger.error(f"CPU Legacy benchmark failed: {e}")
+        
+        legacy_memory_peak = tracemalloc.get_traced_memory()[1] / 1e6
+        tracemalloc.stop()
+        
+        # Restore original function
+        utils_module._interpolate_bads_eeg = original_interpolate
+        
+        results["cpu_legacy"] = {
+            "time_seconds": legacy_time,
+            "memory_peak_mb": legacy_memory_peak,
+            "success": legacy_success,
+            "error": legacy_error,
+        }
+        
+        if legacy_success:
+            results["cpu_legacy"]["consensus"] = {
+                k: float(v) for k, v in ar_legacy.consensus_.items()
+            }
+            results["cpu_legacy"]["n_interpolate"] = {
+                k: int(v) for k, v in ar_legacy.n_interpolate_.items()
+            }
+            logger.info(f"  CPU Legacy time: {legacy_time:.2f}s")
+            logger.info(f"  CPU Legacy memory peak: {legacy_memory_peak:.1f} MB")
+            logger.info(f"  Results: consensus={ar_legacy.consensus_}, n_interpolate={ar_legacy.n_interpolate_}")
+    else:
+        results["cpu_legacy"] = {"success": False, "error": "Legacy module not available"}
+    
+    # ========== CPU Current Benchmark ==========
     logger.info("=" * 60)
-    logger.info("Running CPU benchmark...")
+    logger.info("Running CPU Current benchmark (with sphere centering fix)...")
     
     os.environ['AUTOREJECT_BACKEND'] = 'numpy'
     clear_backend_cache()
@@ -429,7 +501,7 @@ def run_benchmark(config, logger):
         cpu_time = time.perf_counter() - start_time
         cpu_success = False
         cpu_error = str(e)
-        logger.error(f"CPU benchmark failed: {e}")
+        logger.error(f"CPU Current benchmark failed: {e}")
     
     cpu_memory_peak = tracemalloc.get_traced_memory()[1] / 1e6  # MB
     tracemalloc.stop()
@@ -448,8 +520,8 @@ def run_benchmark(config, logger):
         results["cpu"]["n_interpolate"] = {
             k: int(v) for k, v in ar_cpu.n_interpolate_.items()
         }
-        logger.info(f"  CPU time: {cpu_time:.2f}s")
-        logger.info(f"  CPU memory peak: {cpu_memory_peak:.1f} MB")
+        logger.info(f"  CPU Current time: {cpu_time:.2f}s")
+        logger.info(f"  CPU Current memory peak: {cpu_memory_peak:.1f} MB")
         logger.info(f"  Results: consensus={ar_cpu.consensus_}, n_interpolate={ar_cpu.n_interpolate_}")
     
     # ========== GPU Benchmark ==========
@@ -512,7 +584,7 @@ def run_benchmark(config, logger):
     if cpu_success and gpu_success:
         speedup = cpu_time / gpu_time
         
-        # Exact match check
+        # Exact match check (GPU vs CPU Current)
         exact_match = (
             ar_cpu.consensus_ == ar_gpu.consensus_ and
             ar_cpu.n_interpolate_ == ar_gpu.n_interpolate_
@@ -558,6 +630,22 @@ def run_benchmark(config, logger):
             "results_match": exact_match or neighbor_match,
         }
         
+        # Compare with CPU Legacy if available
+        if results.get("cpu_legacy", {}).get("success"):
+            legacy_cons = results["cpu_legacy"]["consensus"].get("eeg")
+            legacy_nint = results["cpu_legacy"]["n_interpolate"].get("eeg")
+            current_cons = ar_cpu.consensus_.get("eeg")
+            current_nint = ar_cpu.n_interpolate_.get("eeg")
+            gpu_cons = ar_gpu.consensus_.get("eeg")
+            gpu_nint = ar_gpu.n_interpolate_.get("eeg")
+            
+            results["comparison"]["legacy_vs_current_match"] = (
+                legacy_cons == current_cons and legacy_nint == current_nint
+            )
+            results["comparison"]["legacy_vs_gpu_match"] = (
+                legacy_cons == gpu_cons and legacy_nint == gpu_nint
+            )
+        
         # Store grids for reference
         results["grids"] = {
             "n_interpolate": n_interpolate,
@@ -565,18 +653,29 @@ def run_benchmark(config, logger):
         }
         
         logger.info("=" * 60)
-        logger.info(f"SPEEDUP: {speedup:.2f}x")
+        logger.info("COMPARISON SUMMARY")
+        logger.info("=" * 60)
+        logger.info(f"SPEEDUP (GPU vs CPU Current): {speedup:.2f}x")
         
         if exact_match:
-            logger.info("✅ Results match exactly")
+            logger.info("✅ GPU vs CPU Current: EXACT MATCH")
         elif neighbor_match:
-            logger.info(f"≈ Results match within tolerance (±1 step)")
+            logger.info(f"≈ GPU vs CPU Current: Within tolerance (±1 step)")
             logger.info(f"   Consensus: CPU={ar_cpu.consensus_} vs GPU={ar_gpu.consensus_} (diff={consensus_diff} steps)")
             logger.info(f"   N_interpolate: CPU={ar_cpu.n_interpolate_} vs GPU={ar_gpu.n_interpolate_} (diff={n_interp_diff} steps)")
         else:
-            logger.warning("❌ Results differ significantly!")
+            logger.warning("❌ GPU vs CPU Current: Results differ significantly!")
             logger.warning(f"   Consensus diff: {consensus_diff} steps")
             logger.warning(f"   N_interpolate diff: {n_interp_diff} steps")
+        
+        # Log legacy comparison
+        if results.get("cpu_legacy", {}).get("success"):
+            if results["comparison"]["legacy_vs_current_match"]:
+                logger.info("ℹ️  CPU Legacy vs CPU Current: SAME (no bug impact on this data)")
+            else:
+                logger.info("📝 CPU Legacy vs CPU Current: DIFFERENT (bug fix changed results)")
+                logger.info(f"   Legacy: consensus={legacy_cons}, n_interpolate={legacy_nint}")
+                logger.info(f"   Current: consensus={current_cons}, n_interpolate={current_nint}")
     
     return results, n_interpolate, consensus
 

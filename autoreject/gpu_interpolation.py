@@ -410,11 +410,6 @@ def gpu_interpolate_bads_eeg(inst, picks=None, keep_on_device=True):
     pos_good = pos[goods_idx_pos]
     pos_bad = pos[bads_idx_pos]
     
-    # Fit sphere and center positions (like MNE does)
-    radius, center = _fit_sphere(pos_good)
-    pos_good = pos_good - center
-    pos_bad = pos_bad - center
-    
     # Compute interpolation matrix on GPU
     interpolation = gpu_make_interpolation_matrix(pos_good, pos_bad, device=device)
     
@@ -579,11 +574,8 @@ def gpu_clean_by_interp(inst, picks=None, device=None, verbose=True):
         compute_dtype = torch.float64
         data_dtype = torch.float32 if device == 'mps' else torch.float64
     
-    # Get positions and center around sphere origin (like MNE does)
-    from mne.bem import _fit_sphere
+    # Get positions for interpolation
     pos_all = inst._get_channel_positions(picks)
-    radius, center = _fit_sphere(pos_all)
-    pos_all = pos_all - center
     
     # Get cached interpolation matrices (or compute if not cached)
     if verbose:

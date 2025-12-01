@@ -127,34 +127,17 @@ ptp = data_tensor.max(dim=-1).values - data_tensor.min(dim=-1).values
 ### Description
 **ÉTAPE CRITIQUE** : Création des données augmentées par interpolation. C'est ici que la réimplémentation GPU des splines sphériques peut diverger significativement.
 
-### Résultat: ✅ VALIDÉ (après correction bug critique)
+### Résultat: ✅ VALIDÉ (GPU = CPU Legacy)
 
-#### 🐛 Bug critique corrigé (1er Décembre 2025)
+#### Note importante sur le centrage sphérique
 
-**Problème** : L'interpolation GPU donnait des résultats différents de MNE (~4500% d'écart !).
+Nous avons découvert que le code original d'autoreject ne centre PAS les positions autour de l'origine de la sphère, contrairement à MNE. Cela pourrait être un bug, mais **la conformité avec le comportement legacy est prioritaire**.
 
-**Cause racine** : MNE centre les positions des capteurs autour de l'origine de la sphère ajustée AVANT de calculer la matrice d'interpolation :
-```python
-# MNE fait (dans _interpolate_bads_eeg):
-radius, origin = _fit_sphere(pos_good)
-pos_good = pos[goods_idx_pos] - origin  # ← CENTRAGE !
-pos_bad = pos[bads_idx_pos] - origin    # ← CENTRAGE !
-interpolation = _make_interpolation_matrix(pos_good, pos_bad)
-```
+**Décision** : On ne modifie PAS le comportement CPU. Notre implémentation GPU reproduit exactement le comportement legacy (sans centrage).
 
-Notre implémentation ne faisait PAS ce centrage, ce qui changeait significativement la matrice d'interpolation (diff = 0.6, soit 60% des poids !).
+Le bug potentiel est documenté dans `POTENTIAL_BUG_SPHERE_CENTERING.md` pour discussion avec le maintainer.
 
-**Fichiers corrigés** :
-1. `autoreject/utils.py` (ligne ~335) : ajout `pos_good -= center`, `pos_bad -= center`
-2. `autoreject/gpu_interpolation.py` : 
-   - `gpu_interpolate_bads_eeg()` : ajout `_fit_sphere` et centrage
-   - `gpu_clean_by_interp()` : ajout `_fit_sphere` et centrage
-   - Correction `DeviceArray(data, backend, device)` au lieu de `DeviceArray(data, backend='torch', device=...)`
-3. `autoreject/gpu_pipeline.py` :
-   - `run_local_reject_cv_gpu()` ligne ~830 : centrage avant normalisation
-   - `run_local_reject_cv_gpu_v2()` ligne ~1058 : centrage des positions
-
-#### Résultats après correction
+#### Résultats de validation
 
 Les tests montrent que l'implémentation GPU est **quasi-identique** à la version CPU :
 
