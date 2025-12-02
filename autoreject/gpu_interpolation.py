@@ -28,8 +28,8 @@ def is_cuda_device(device):
     """Check if device is CUDA (not MPS or CPU).
     
     This is used to determine compute strategy:
-    - CUDA: float64 on device for all operations (bit-exact with CPU)
-    - MPS: float64 on CPU for matrix computation, float32 for matmul
+    - CUDA: float64 on device for all operations
+    - MPS: float32 on device (variance test showed this is acceptable)
     - CPU: float64 everywhere
     
     Parameters
@@ -196,22 +196,27 @@ def gpu_make_interpolation_matrix(pos_from, pos_to, alpha=1e-5, device=None):
         device = backend.device
     
     # Determine compute strategy based on device type
-    # CUDA: float64 on device for everything (bit-exact with CPU)
-    # MPS: float64 on CPU for pinv (MPS pinv falls back to CPU anyway), float32 for matmul
+    # CUDA: float64 on device for all operations
+    # MPS: float32 on device (MPS only supports float32, variance test showed this is acceptable)
     # CPU: float64 everywhere
     use_cuda = is_cuda_device(device)
+    is_mps = str(device).lower() == 'mps'
     
     if use_cuda:
         # CUDA: everything in float64 on device
         compute_device = device
         compute_dtype = torch.float64
         output_dtype = torch.float64
-    else:
-        # MPS or CPU: compute on CPU in float64
-        # For MPS: keep float64 on CPU - matmul will be done on CPU for exact conformity
+    elif is_mps:
+        # MPS: compute in float64 on CPU (for pinv precision), output float32 on device
         compute_device = 'cpu'
         compute_dtype = torch.float64
-        output_dtype = torch.float64  # Always float64, matmul on CPU for MPS
+        output_dtype = torch.float32  # MPS only supports float32
+    else:
+        # CPU: float64 everywhere
+        compute_device = 'cpu'
+        compute_dtype = torch.float64
+        output_dtype = torch.float64
     
     # Convert to torch tensors (float64 for precision)
     if isinstance(pos_from, np.ndarray):
@@ -265,13 +270,10 @@ def gpu_make_interpolation_matrix(pos_from, pos_to, alpha=1e-5, device=None):
     assert interpolation.shape == (n_to, n_from)
     
     # Move to target device with appropriate dtype
-    # CUDA: keep float64 on device for bit-exact results
-    # MPS: keep float64 on CPU - matmul will be done on CPU for exact conformity
-    if use_cuda:
-        interpolation = interpolation.to(device=device, dtype=output_dtype)
-    else:
-        # For MPS: keep on CPU in float64, gpu_do_interp_dots will handle the transfer
-        interpolation = interpolation.to(dtype=output_dtype)  # Stay on CPU
+    # CUDA: keep float64 on device
+    # MPS: convert to float32 and move to device (variance test showed this is acceptable)
+    # CPU: keep float64
+    interpolation = interpolation.to(device=device, dtype=output_dtype)
     
     return DeviceArray(interpolation, backend, str(device))
 
@@ -333,43 +335,31 @@ def gpu_do_interp_dots(data, interpolation, goods_idx, bads_idx, keep_on_device=
     # Get good channel data
     good_data = data_tensor[..., goods_idx_t, :]
     
-    # Determine if we should use CPU float64 for exact conformity
-    # MPS: interp_tensor is on CPU in float64, do matmul on CPU
-    # CUDA: interp_tensor is on device in float64, do matmul on device
-    use_cpu_matmul = interp_tensor.device.type == 'cpu' and device != 'cpu'
+    # Ensure interp_tensor is on the same device as data
+    if interp_tensor.device != data_tensor.device:
+        interp_tensor = interp_tensor.to(data_tensor.device)
     
-    if use_cpu_matmul:
-        # MPS path: transfer data to CPU, matmul in float64, transfer back
-        # This ensures exact conformity with CPU legacy at ~1% performance cost
-        good_data_cpu = good_data.cpu().to(torch.float64)
+    # Match dtype if needed
+    if interp_tensor.dtype != good_data.dtype:
+        interp_tensor = interp_tensor.to(good_data.dtype)
+    
+    # Matmul directly on device (GPU accelerated)
+    if data_tensor.ndim == 2:
+        # (n_channels, n_times) - single epoch/evoked
+        interpolated = interp_tensor @ good_data
+    elif data_tensor.ndim == 3:
+        # (n_epochs, n_channels, n_times)
+        # interp_tensor: (n_bad, n_good)
+        # good_data: (n_epochs, n_good, n_times)
+        n_epochs = good_data.shape[0]
+        n_bad = interp_tensor.shape[0]
         
-        if data_tensor.ndim == 2:
-            interpolated_cpu = interp_tensor @ good_data_cpu
-        elif data_tensor.ndim == 3:
-            interpolated_cpu = torch.einsum('bg,egt->ebt', interp_tensor, good_data_cpu)
-        else:
-            raise ValueError(f"Unsupported data dimensions: {data_tensor.ndim}")
-        
-        # Transfer back to device as float32
-        interpolated = interpolated_cpu.to(torch.float32).to(device)
+        # Expand interp to (n_epochs, n_bad, n_good) for bmm
+        interp_expanded = interp_tensor.unsqueeze(0).expand(n_epochs, -1, -1)
+        # bmm: (n_epochs, n_bad, n_good) @ (n_epochs, n_good, n_times) -> (n_epochs, n_bad, n_times)
+        interpolated = torch.bmm(interp_expanded, good_data)
     else:
-        # CUDA or CPU path: matmul directly on device
-        if data_tensor.ndim == 2:
-            # (n_channels, n_times) - single epoch/evoked
-            interpolated = interp_tensor @ good_data
-        elif data_tensor.ndim == 3:
-            # (n_epochs, n_channels, n_times)
-            # interp_tensor: (n_bad, n_good)
-            # good_data: (n_epochs, n_good, n_times)
-            n_epochs = good_data.shape[0]
-            n_bad = interp_tensor.shape[0]
-            
-            # Expand interp to (n_epochs, n_bad, n_good) for bmm
-            interp_expanded = interp_tensor.unsqueeze(0).expand(n_epochs, -1, -1)
-            # bmm: (n_epochs, n_bad, n_good) @ (n_epochs, n_good, n_times) -> (n_epochs, n_bad, n_times)
-            interpolated = torch.bmm(interp_expanded, good_data)
-        else:
-            raise ValueError(f"Unsupported data dimensions: {data_tensor.ndim}")
+        raise ValueError(f"Unsupported data dimensions: {data_tensor.ndim}")
     
     # Replace bad channel data
     data_tensor[..., bads_idx_t, :] = interpolated

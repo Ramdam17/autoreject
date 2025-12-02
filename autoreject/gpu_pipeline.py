@@ -1294,16 +1294,9 @@ def run_local_reject_cv_gpu_batch(epochs, thresh_func, picks_, n_interpolate, cv
                 mean_gpu = X_good.mean(dim=0)  # (n_channels, n_times)
                 
                 # score = -sqrt(mean((median_X - mean_)^2))
-                # For MPS: compute score on CPU in float64 for exact conformity
-                # with CPU legacy (MPS only supports float32)
-                if optimizer.device == 'mps':
-                    median_cpu = median_X.cpu().to(optimizer.torch.float64)
-                    mean_cpu = mean_gpu.cpu().to(optimizer.torch.float64)
-                    scores_gpu[idx] = -((median_cpu - mean_cpu) ** 2).mean().sqrt()
-                else:
-                    # CUDA supports float64 natively, keep on GPU
-                    sq_diff = (median_X - mean_gpu) ** 2
-                    scores_gpu[idx] = -sq_diff.mean().sqrt()
+                # GPU-accelerated scoring (variance test showed float32 is acceptable)
+                sq_diff = (median_X - mean_gpu) ** 2
+                scores_gpu[idx] = -sq_diff.mean().sqrt()
             
             # SINGLE sync per fold
             scores_np = scores_gpu.cpu().numpy()
