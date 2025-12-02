@@ -334,6 +334,24 @@ class GPUThresholdOptimizer:
             # n_good_train: (n_channels, n_thresh)
             n_good_train = good_train.sum(dim=0)
             
+            # CPU fallback logic: when threshold < min_ptp, use min_ptp epochs
+            # This matches _ChannelAutoReject.fit() behavior:
+            #   if self.thresh < min_ptp:
+            #       keep = deltas <= min_ptp
+            # For each channel, if n_good is 0, fallback to epochs with min ptp
+            # min_ptp per channel: (n_channels,)
+            min_ptp_per_channel = ptp_train.min(dim=0).values  # (n_channels,)
+            # fallback_good: (n_train, n_channels) - True where ptp == min_ptp
+            fallback_good = ptp_train <= min_ptp_per_channel.unsqueeze(0)  # (n_train, n_channels)
+            
+            # Apply fallback only where n_good_train == 0
+            # Expand fallback_good to match good_train shape: (n_train, n_channels, n_thresh)
+            fallback_expanded = fallback_good.unsqueeze(-1).expand_as(good_train)
+            # Use fallback where all thresholds have n_good == 0 for that channel
+            no_good_mask = (n_good_train == 0).unsqueeze(0)  # (1, n_channels, n_thresh)
+            good_train = self.torch.where(no_good_mask, fallback_expanded, good_train)
+            n_good_train = good_train.sum(dim=0)
+            
             # Compute masked sum using BMM (batch matrix multiply) instead of 4D broadcast
             # This is ~60x faster and uses much less memory
             # data_train: (n_train, n_channels, n_times) -> (n_channels, n_times, n_train)
@@ -360,7 +378,7 @@ class GPUThresholdOptimizer:
             # rmse: (n_channels, n_thresh)
             rmse = sq_diff.mean(dim=1).sqrt()
             
-            # Handle cases with no good epochs
+            # Handle cases with no good epochs (should be rare after fallback)
             no_good = (n_good_train == 0)
             rmse[no_good] = float('inf')
             
@@ -681,7 +699,7 @@ def compute_thresholds_gpu(epochs, method='bayesian_optimization',
     n_jobs : int
         Not used (GPU is inherently parallel).
     device : str or None
-        GPU device to use.
+        GPU device to use ('cuda' or 'mps').
     dots : tuple or None
         Precomputed dots for interpolation (passed through to _clean_by_interp).
     
@@ -953,6 +971,162 @@ def run_local_reject_cv_gpu(epochs, thresh_func, picks_, n_interpolate, cv,
     return local_reject, loss
 
 
+def _run_local_reject_cv_mps_hybrid(epochs, thresh_func, picks_, n_interpolate, cv,
+                                    consensus, dots=None, verbose=True, n_jobs=1,
+                                    device='mps'):
+    """
+    MPS hybrid mode: GPU interpolation + CPU scoring.
+    
+    This provides speedup from GPU batch interpolation while maintaining
+    CPU-conformant results by doing the CV scoring in float64 on CPU.
+    
+    Architecture:
+    - Phase 1: Compute thresholds (CPU via force_cpu_backend in thresh_func)
+    - Phase 2: Batch interpolation for all n_interp values (GPU - speedup here!)
+    - Phase 3: CV scoring loop (CPU float64 - conformity here!)
+    
+    Parameters
+    ----------
+    epochs : mne.Epochs
+        The epochs to process.
+    thresh_func : callable
+        Function to compute thresholds.
+    picks_ : array-like
+        Channel indices.
+    n_interpolate : array-like
+        Values of n_interpolate to try.
+    cv : sklearn cross-validator
+        Cross-validation object.
+    consensus : array-like
+        Values of consensus to try.
+    dots : tuple | None
+        Precomputed dots for interpolation.
+    verbose : bool
+        Whether to show progress.
+    n_jobs : int
+        Number of parallel jobs (unused, kept for API compatibility).
+    device : str
+        GPU device (should be 'mps').
+    
+    Returns
+    -------
+    local_reject : _AutoReject
+        Fitted autoreject instance.
+    loss : ndarray
+        Loss array of shape (n_consensus, n_interpolate, n_folds).
+    """
+    from .autoreject import (
+        _AutoReject, _get_interp_chs, _slicemean, _pbar, _GDKW
+    )
+    from .backends import force_cpu_backend
+    
+    if verbose:
+        print("  [MPS Hybrid] GPU interpolation + CPU scoring (float64 precision)")
+    
+    n_folds = cv.get_n_splits()
+    n_interp_values = len(n_interpolate)
+    n_consensus_values = len(consensus)
+    loss = np.zeros((n_consensus_values, n_interp_values, n_folds))
+    
+    # =========================================================================
+    # Phase 1: Fit thresholds (CPU for float64 conformity)
+    # thresh_func already uses force_cpu_backend via compute_thresholds_gpu
+    # =========================================================================
+    with force_cpu_backend():
+        local_reject = _AutoReject(thresh_func=thresh_func,
+                                   verbose=verbose, picks=picks_,
+                                   dots=dots, device=None)  # device=None forces CPU
+        local_reject.fit(epochs)
+    
+    assert len(local_reject.consensus_) == 1
+    ch_type = next(iter(local_reject.consensus_))
+    
+    # Vote bad epochs (CPU, uses thresholds)
+    with force_cpu_backend():
+        labels_original, bad_sensor_counts = local_reject._vote_bad_epochs(
+            epochs, picks=picks_
+        )
+    
+    # =========================================================================
+    # Phase 2: Batch interpolation for ALL n_interp values (GPU - speedup!)
+    # =========================================================================
+    if verbose:
+        print("  Phase 2: GPU batch interpolation...")
+    
+    # Compute labels for all n_interp values
+    labels_list = []
+    X_full = epochs.get_data(**_GDKW)
+    
+    for n_interp in n_interpolate:
+        local_reject.n_interpolate_[ch_type] = n_interp
+        labels = local_reject._get_epochs_interpolation(
+            epochs, labels=labels_original.copy(), picks=picks_, 
+            n_interpolate=n_interp, verbose=False, data=X_full
+        )
+        labels_list.append(labels)
+    
+    # GPU batch interpolation
+    from .gpu_interpolation import gpu_batch_interpolate_all_n_interp
+    
+    pos = epochs._get_channel_positions(picks_)
+    X_interp_all_gpu = gpu_batch_interpolate_all_n_interp(
+        epochs, labels_list, picks_, pos, device=device, verbose=verbose
+    )
+    
+    # Convert GPU results to numpy (float64) for CPU scoring
+    X_interp_all = []
+    for X_gpu in X_interp_all_gpu:
+        if hasattr(X_gpu, 'cpu'):
+            X_np = X_gpu.cpu().numpy().astype(np.float64)
+        else:
+            X_np = np.array(X_gpu, dtype=np.float64)
+        X_interp_all.append(X_np)
+    
+    # =========================================================================
+    # Phase 3: CV scoring loop (CPU float64 - conformity!)
+    # =========================================================================
+    if verbose:
+        print("  Phase 3: CPU CV scoring (float64)...")
+    
+    X = epochs.get_data(picks_, **_GDKW)
+    cv_splits = list(cv.split(X))
+    
+    for jdx, n_interp in enumerate(n_interpolate):
+        X_interp = X_interp_all[jdx]
+        
+        for fold, (train, test) in enumerate(cv_splits):
+            for idx, this_consensus in enumerate(consensus):
+                n_channels = len(picks_)
+                if this_consensus * n_channels <= n_interp:
+                    loss[idx, jdx, fold] = np.inf
+                    continue
+                
+                local_reject.consensus_[ch_type] = this_consensus
+                bad_epochs = local_reject._get_bad_epochs(
+                    bad_sensor_counts[train], picks=picks_, ch_type=ch_type
+                )
+                
+                good_epochs_idx = np.nonzero(np.invert(bad_epochs))[0]
+                
+                if len(good_epochs_idx) == 0:
+                    loss[idx, jdx, fold] = np.inf
+                    continue
+                
+                # CPU scoring (float64)
+                # _slicemean signature: (obj, this_slice, axis)
+                X_train_interp = X_interp[train]
+                local_reject.mean_ = _slicemean(
+                    X_train_interp, good_epochs_idx, axis=0
+                )
+                score = local_reject.score(X[test])
+                loss[idx, jdx, fold] = -score
+    
+    if verbose:
+        print("  ✓ MPS hybrid processing complete!")
+    
+    return local_reject, loss
+
+
 def run_local_reject_cv_gpu_batch(epochs, thresh_func, picks_, n_interpolate, cv,
                                   consensus, dots=None, verbose=True, n_jobs=1,
                                   device=None):
@@ -1120,8 +1294,16 @@ def run_local_reject_cv_gpu_batch(epochs, thresh_func, picks_, n_interpolate, cv
                 mean_gpu = X_good.mean(dim=0)  # (n_channels, n_times)
                 
                 # score = -sqrt(mean((median_X - mean_)^2))
-                sq_diff = (median_X - mean_gpu) ** 2
-                scores_gpu[idx] = -sq_diff.mean().sqrt()
+                # For MPS: compute score on CPU in float64 for exact conformity
+                # with CPU legacy (MPS only supports float32)
+                if optimizer.device == 'mps':
+                    median_cpu = median_X.cpu().to(optimizer.torch.float64)
+                    mean_cpu = mean_gpu.cpu().to(optimizer.torch.float64)
+                    scores_gpu[idx] = -((median_cpu - mean_cpu) ** 2).mean().sqrt()
+                else:
+                    # CUDA supports float64 natively, keep on GPU
+                    sq_diff = (median_X - mean_gpu) ** 2
+                    scores_gpu[idx] = -sq_diff.mean().sqrt()
             
             # SINGLE sync per fold
             scores_np = scores_gpu.cpu().numpy()

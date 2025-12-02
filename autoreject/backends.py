@@ -40,13 +40,14 @@ AUTOREJECT_BACKEND : str
 
 import os
 import warnings
+from contextlib import contextmanager
 from functools import lru_cache
 
 import numpy as np
 
 
 __all__ = ['detect_hardware', 'get_backend', 'get_backend_names', 
-           'DeviceArray', 'is_device_array']
+           'DeviceArray', 'is_device_array', 'force_cpu_backend']
 
 
 # =============================================================================
@@ -382,6 +383,41 @@ def get_backend(prefer=None):
     backend = NumpyBackend()
     _BACKEND_CACHE[cache_key] = backend
     return backend
+
+
+@contextmanager
+def force_cpu_backend():
+    """Context manager to temporarily force the CPU (NumPy) backend.
+    
+    This is used for MPS fallback to CPU when float64 precision is required.
+    The context manager saves the current backend cache state, forces NumPy,
+    and restores the original state on exit.
+    
+    Examples
+    --------
+    >>> with force_cpu_backend():
+    ...     backend = get_backend()
+    ...     assert backend.name == 'numpy'
+    >>> # Original backend is restored after the context
+    """
+    global _BACKEND_CACHE
+    # Save current cache and environment
+    saved_cache = _BACKEND_CACHE.copy()
+    saved_env = os.environ.get('AUTOREJECT_BACKEND', None)
+    
+    try:
+        # Force NumPy backend
+        _BACKEND_CACHE.clear()
+        os.environ['AUTOREJECT_BACKEND'] = 'numpy'
+        yield
+    finally:
+        # Restore original state
+        _BACKEND_CACHE.clear()
+        _BACKEND_CACHE.update(saved_cache)
+        if saved_env is not None:
+            os.environ['AUTOREJECT_BACKEND'] = saved_env
+        elif 'AUTOREJECT_BACKEND' in os.environ:
+            del os.environ['AUTOREJECT_BACKEND']
 
 
 def _try_load_backend(name):

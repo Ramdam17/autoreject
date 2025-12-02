@@ -603,8 +603,20 @@ class _AutoReject(BaseAutoReject):
         # ptp along time axis, then transpose to (n_channels, n_epochs)
         deltas = backend.ptp(data, axis=-1).T
         
+        # Check if we need float32 threshold adjustment for MPS backend
+        # MPS (Apple Silicon) only supports float32, which can cause edge-case
+        # flips when comparing to float64 thresholds. CUDA supports float64
+        # natively so no adjustment needed there.
+        # We convert thresholds to float32 and round UP to ensure consistency.
+        use_f32_thresh = (backend.name == 'torch' and 
+                         hasattr(backend, 'device') and 
+                         backend.device == 'mps')
+        
         threshes = [self.threshes_[ch_name] for ch_name in this_ch_names]
         for ch_idx, (delta, thresh) in enumerate(zip(deltas, threshes)):
+            if use_f32_thresh:
+                # MPS float32: round threshold UP to next float32 to match
+                thresh = np.nextafter(np.float32(thresh), np.float32(np.inf))
             bad_epochs_idx = np.where(delta > thresh)[0]
             labels[:, picks[ch_idx]] = 0
             labels[bad_epochs_idx, picks[ch_idx]] = 1
