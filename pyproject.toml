@@ -51,9 +51,6 @@ parallel = [
 gpu = [
     "torch >= 2.0",  # GPU acceleration (CUDA/MPS)
 ]
-gpu-cuda = [
-    "jax[cuda12]",  # JAX with CUDA support for NVIDIA GPUs
-]
 benchmark = [
     "pytest-benchmark",  # Performance benchmarking
     "psutil",  # System resource monitoring

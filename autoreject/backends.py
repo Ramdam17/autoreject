@@ -1,7 +1,7 @@
 """Backend abstraction for compute operations.
 
 This module provides a unified interface for array operations across different
-compute backends (NumPy, Numba, PyTorch, JAX). It enables:
+compute backends (NumPy, Numba, PyTorch). It enables:
 
 - Automatic hardware detection (CPU, CUDA, MPS)
 - Graceful fallback when optional dependencies are not installed
@@ -33,7 +33,7 @@ Environment Variables
 ---------------------
 AUTOREJECT_BACKEND : str
     Override automatic backend selection. Valid values:
-    'numpy', 'numba', 'torch', 'jax'
+    'numpy', 'numba', 'torch'
 """
 
 # Authors: autoreject contributors
@@ -64,7 +64,7 @@ class DeviceArray:
     Parameters
     ----------
     data : array-like
-        The underlying array (numpy, torch.Tensor, jax.Array, etc.)
+        The underlying array (numpy or torch.Tensor)
     backend : BaseBackend
         The backend that created this array.
     device : str
@@ -199,7 +199,7 @@ def detect_hardware():
         Dictionary with keys for each hardware type and boolean values
         indicating availability. Keys include:
         - 'cpu': Always True
-        - 'cuda': True if NVIDIA GPU available via PyTorch or JAX
+        - 'cuda': True if NVIDIA GPU available via PyTorch
         - 'mps': True if Apple Silicon GPU available via PyTorch
         - 'cuda_device': Name of CUDA device (if available)
         - 'mps_device': 'Apple Silicon' (if available)
@@ -229,20 +229,6 @@ def detect_hardware():
         if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
             available['mps'] = True
             available['mps_device'] = 'Apple Silicon'
-    except ImportError:
-        pass
-    except Exception:
-        pass
-    
-    # Check for JAX GPU support
-    try:
-        import jax
-        devices = jax.devices()
-        for d in devices:
-            if d.platform == 'gpu':
-                available['jax_gpu'] = True
-                available['jax_device'] = str(d)
-                break
     except ImportError:
         pass
     except Exception:
@@ -280,12 +266,6 @@ def get_backend_names():
     except ImportError:
         pass
     
-    try:
-        import jax
-        names.append('jax')
-    except ImportError:
-        pass
-    
     return names
 
 
@@ -302,7 +282,7 @@ def get_backend(prefer=None):
     Parameters
     ----------
     prefer : str | None
-        Preferred backend: 'numpy', 'numba', 'torch', 'jax', or None (auto).
+        Preferred backend: 'numpy', 'numba', 'torch', or None (auto).
         Can also be set via AUTOREJECT_BACKEND environment variable.
         If the preferred backend is not available, falls back to the next
         best option.
@@ -315,7 +295,7 @@ def get_backend(prefer=None):
     Notes
     -----
     Backend selection priority (when prefer=None):
-    1. If CUDA GPU available: JAX > PyTorch > Numba > NumPy
+    1. If CUDA GPU available: PyTorch > Numba > NumPy
     2. If MPS (Apple Silicon) available: PyTorch > Numba > NumPy
     3. CPU only: Numba > NumPy
     
@@ -355,11 +335,7 @@ def get_backend(prefer=None):
     hw = detect_hardware()
     
     # Priority 1: GPU acceleration
-    if hw.get('cuda') or hw.get('jax_gpu'):
-        backend = _try_load_backend('jax')
-        if backend is not None:
-            _BACKEND_CACHE[cache_key] = backend
-            return backend
+    if hw.get('cuda'):
         backend = _try_load_backend('torch')
         if backend is not None:
             _BACKEND_CACHE[cache_key] = backend
@@ -426,7 +402,7 @@ def _try_load_backend(name):
     Parameters
     ----------
     name : str
-        Backend name: 'numpy', 'numba', 'torch', or 'jax'.
+        Backend name: 'numpy', 'numba', or 'torch'.
     
     Returns
     -------
@@ -440,8 +416,6 @@ def _try_load_backend(name):
             return NumbaBackend()
         elif name == 'torch':
             return TorchBackend()
-        elif name == 'jax':
-            return JaxBackend()
         else:
             warnings.warn(f"Unknown backend: {name}", RuntimeWarning)
             return None
@@ -474,7 +448,7 @@ class BaseBackend:
     Attributes
     ----------
     name : str
-        Backend name ('numpy', 'numba', 'torch', 'jax').
+        Backend name ('numpy', 'numba', 'torch').
     device : str
         Device description ('cpu', 'cuda:0', 'mps', etc.).
     supports_gpu : bool
@@ -1150,127 +1124,3 @@ class TorchBackend(BaseBackend):
         t = self._to_tensor(data)
         result = t.clone()
         return self._maybe_wrap(result, keep_on_device)
-
-
-# =============================================================================
-# JAX Backend (CUDA/TPU)
-# =============================================================================
-
-class JaxBackend(BaseBackend):
-    """JAX backend with GPU/TPU support.
-    
-    Uses JAX's XLA compilation for high-performance operations.
-    Automatically detects and uses available accelerators.
-    
-    Notes
-    -----
-    JAX operations are JIT-compiled on first call for each input shape.
-    Subsequent calls with the same shape will be much faster.
-    
-    Use `to_device()` and `keep_on_device=True` to keep data on GPU.
-    """
-    
-    name = 'jax'
-    supports_gpu = True
-    
-    def __init__(self):
-        """Initialize JAX backend."""
-        import jax
-        import jax.numpy as jnp
-        
-        self._jax = jax
-        self._jnp = jnp
-        
-        # Determine device
-        devices = jax.devices()
-        if devices and devices[0].platform == 'gpu':
-            self.device = f'gpu:{devices[0].id}'
-            self._is_gpu = True
-        elif devices and devices[0].platform == 'tpu':
-            self.device = f'tpu:{devices[0].id}'
-            self._is_gpu = True
-        else:
-            self.device = 'cpu'
-            self._is_gpu = False
-        
-        # Create JIT-compiled functions
-        self._ptp_jit = jax.jit(self._ptp_impl)
-        self._median_jit = jax.jit(self._median_impl, static_argnums=(1,))
-        self._correlation_jit = jax.jit(self._correlation_impl)
-    
-    def _ptp_impl(self, data):
-        """Peak-to-peak implementation for JIT."""
-        return self._jnp.max(data, axis=-1) - self._jnp.min(data, axis=-1)
-    
-    def _median_impl(self, data, axis):
-        """Median implementation for JIT."""
-        return self._jnp.median(data, axis=axis)
-    
-    def _correlation_impl(self, x, y):
-        """Correlation implementation for JIT."""
-        num = self._jnp.sum(x * y, axis=0)
-        denom = self._jnp.sqrt(self._jnp.sum(x ** 2, axis=0)) * \
-                self._jnp.sqrt(self._jnp.sum(y ** 2, axis=0))
-        return num / denom
-    
-    def _to_jax(self, data):
-        """Convert data to JAX array."""
-        if isinstance(data, DeviceArray):
-            data = data._data
-        return self._jnp.asarray(data)
-    
-    def _maybe_wrap(self, arr, keep_on_device):
-        """Wrap result in DeviceArray or convert to numpy."""
-        if keep_on_device:
-            return DeviceArray(arr, self, self.device)
-        return np.asarray(arr)
-    
-    def to_device(self, data):
-        """Transfer data to GPU/TPU."""
-        arr = self._to_jax(data)
-        return DeviceArray(arr, self, self.device)
-    
-    def ptp(self, data, axis=-1, keep_on_device=False):
-        """Compute peak-to-peak using JAX."""
-        data = self._to_jax(data)
-        if axis == -1:
-            result = self._ptp_jit(data)
-        else:
-            result = self._jnp.max(data, axis=axis) - self._jnp.min(data, axis=axis)
-        return self._maybe_wrap(result, keep_on_device)
-    
-    def median(self, data, axis=None, keep_on_device=False):
-        """Compute median using JAX."""
-        data = self._to_jax(data)
-        result = self._median_jit(data, axis)
-        return self._maybe_wrap(result, keep_on_device)
-    
-    def correlation(self, x, y, keep_on_device=False):
-        """Compute correlation using JAX."""
-        x = self._to_jax(x)
-        y = self._to_jax(y)
-        result = self._correlation_jit(x, y)
-        return self._maybe_wrap(result, keep_on_device)
-    
-    def matmul(self, a, b, keep_on_device=False):
-        """Matrix multiplication using JAX."""
-        a = self._to_jax(a)
-        b = self._to_jax(b)
-        result = self._jnp.matmul(a, b)
-        return self._maybe_wrap(result, keep_on_device)
-    
-    def to_numpy(self, arr):
-        """Convert JAX array to NumPy."""
-        if isinstance(arr, DeviceArray):
-            arr = arr._data
-        return np.asarray(arr)
-    
-    def is_on_device(self, arr):
-        """Check if array is on this backend's device."""
-        if isinstance(arr, DeviceArray):
-            return arr.device == self.device
-        # JAX arrays are always on their device
-        try:
-            return hasattr(arr, 'device') and arr.device().platform in ('gpu', 'tpu')
-        except:
-            return False

@@ -341,64 +341,6 @@ class TestTorchBackend:
         assert backend.device in ('cpu', 'cuda', 'mps')
 
 
-class TestJaxBackend:
-    """Tests for JAX backend operations."""
-    
-    @pytest.fixture
-    def backend(self):
-        """Get JAX backend, skip if not available."""
-        pytest.importorskip('jax')
-        from autoreject.backends import JaxBackend
-        return JaxBackend()
-    
-    @pytest.fixture
-    def numpy_backend(self):
-        """Get NumPy backend for comparison."""
-        from autoreject.backends import NumpyBackend
-        return NumpyBackend()
-    
-    def test_ptp_matches_numpy(self, backend, numpy_backend):
-        """Test that JAX ptp matches NumPy."""
-        np.random.seed(42)
-        data = np.random.randn(10, 5, 100)
-        
-        result = backend.ptp(data, axis=-1)
-        expected = numpy_backend.ptp(data, axis=-1)
-        
-        assert_allclose(result, expected, rtol=1e-5)
-    
-    def test_median_matches_numpy(self, backend, numpy_backend):
-        """Test that JAX median matches NumPy."""
-        np.random.seed(42)
-        data = np.random.randn(10, 5)
-        
-        result = backend.median(data, axis=-1)
-        expected = numpy_backend.median(data, axis=-1)
-        
-        assert_allclose(result, expected, rtol=1e-5)
-    
-    def test_correlation_matches_numpy(self, backend, numpy_backend):
-        """Test that JAX correlation matches NumPy."""
-        np.random.seed(42)
-        x = np.random.randn(100, 5)
-        y = np.random.randn(100, 5)
-        
-        result = backend.correlation(x, y)
-        expected = numpy_backend.correlation(x, y)
-        
-        assert_allclose(result, expected, rtol=1e-5)
-    
-    def test_to_numpy_from_jax_array(self, backend):
-        """Test conversion from JAX array to NumPy."""
-        import jax.numpy as jnp
-        
-        jax_arr = jnp.array([1.0, 2.0, 3.0])
-        result = backend.to_numpy(jax_arr)
-        
-        assert isinstance(result, np.ndarray)
-        assert_array_equal(result, np.array([1.0, 2.0, 3.0]))
-
-
 class TestBackendConsistency:
     """Tests ensuring all backends produce consistent results."""
     
