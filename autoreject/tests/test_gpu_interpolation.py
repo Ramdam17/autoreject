@@ -246,7 +246,7 @@ class TestGpuDoInterpDots:
         result = gpu_do_interp_dots(data, interp, goods_idx, bads_idx, keep_on_device=True)
         
         assert is_device_array(result)
-        assert result.backend == 'torch'
+        assert result.backend.name == 'torch'
 
 
 if __name__ == '__main__':
