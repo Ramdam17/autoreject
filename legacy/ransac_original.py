@@ -16,7 +16,7 @@ from mne.channels.interpolation import _make_interpolation_matrix
 from mne.parallel import parallel_func
 from mne.utils import check_random_state
 
-from .utils_original import _pbar, _handle_picks, _check_data, _get_channel_type, _GDKW
+from legacy.utils_original import _pbar, _handle_picks, _check_data, _get_channel_type, _GDKW
 
 
 class Ransac(object):

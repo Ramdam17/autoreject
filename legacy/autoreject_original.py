@@ -23,10 +23,10 @@ from sklearn.model_selection import RandomizedSearchCV
 from sklearn.model_selection import KFold, StratifiedShuffleSplit
 from sklearn.model_selection import cross_val_score, check_cv
 
-from .utils_original import (_clean_by_interp, interpolate_bads, _get_epochs_type,
+from legacy.utils_original import (_clean_by_interp, interpolate_bads, _get_epochs_type,
                     _pbar, _handle_picks, _check_data, _compute_dots,
                     _get_picks_by_type, _pprint, _GDKW)
-from .bayesopt_original import expected_improvement, bayes_opt
+from legacy.bayesopt_original import expected_improvement, bayes_opt
 
 
 _INIT_PARAMS = ('consensus', 'n_interpolate', 'picks',
