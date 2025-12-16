@@ -15,9 +15,8 @@ What's new?
 Changelog
 ~~~~~~~~~
 
-- Add GPU acceleration support via PyTorch backend (CUDA and Apple MPS) in :github:`#XXX`
-- Add backend abstraction layer with automatic device detection in :github:`#XXX`
-- Add ``AUTOREJECT_BACKEND`` environment variable to select compute backend in :github:`#XXX`
+- Add optional GPU acceleration via PyTorch backend (CUDA and Apple MPS). 
+  Set ``AUTOREJECT_BACKEND=torch`` environment variable to enable.
 - The package build backend was switched from ``setuptools`` to ``hatchling``. For users, nothing should change, by `Richard Höchenberger`_ in :github:`#335`
 - ``autoreject`` now requires a minimum Python version of 3.10, by `Stefan Appelhoff`_ in :github:`#339`
 
