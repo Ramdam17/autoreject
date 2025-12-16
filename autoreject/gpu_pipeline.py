@@ -1342,7 +1342,7 @@ def should_use_gpu(n_epochs, n_channels, device=None):
     
     # OPTIMIZATION 4: Respect AUTOREJECT_BACKEND environment variable
     backend_env = os.environ.get('AUTOREJECT_BACKEND', '').lower()
-    if backend_env == 'numpy' or backend_env == 'numba':
+    if backend_env == 'numpy':
         return False, 'cpu'
     
     if device == 'cpu':

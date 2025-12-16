@@ -1,7 +1,7 @@
 """Backend abstraction for compute operations.
 
 This module provides a unified interface for array operations across different
-compute backends (NumPy, Numba, PyTorch). It enables:
+compute backends (NumPy, PyTorch). It enables:
 
 - Automatic hardware detection (CPU, CUDA, MPS)
 - Graceful fallback when optional dependencies are not installed
@@ -23,7 +23,7 @@ Usage
 >>> final = backend.to_numpy(result)  # Transfer only at the end
 >>> 
 >>> # Force a specific backend
->>> backend = get_backend(prefer='numba')
+>>> backend = get_backend(prefer='torch')
 >>> 
 >>> # Check available hardware
 >>> hw = detect_hardware()
@@ -33,7 +33,7 @@ Environment Variables
 ---------------------
 AUTOREJECT_BACKEND : str
     Override automatic backend selection. Valid values:
-    'numpy', 'numba', 'torch'
+    'numpy', 'torch'
 """
 
 # Authors: autoreject contributors
@@ -234,14 +234,6 @@ def detect_hardware():
     except Exception:
         pass
     
-    # Check for Numba availability
-    try:
-        import numba
-        available['numba'] = True
-        available['numba_version'] = numba.__version__
-    except ImportError:
-        pass
-    
     return available
 
 
@@ -254,11 +246,6 @@ def get_backend_names():
         List of backend names that can be used with get_backend().
     """
     names = ['numpy']  # Always available
-    
-    hw = detect_hardware()
-    
-    if hw.get('numba'):
-        names.append('numba')
     
     try:
         import torch
@@ -282,7 +269,7 @@ def get_backend(prefer=None):
     Parameters
     ----------
     prefer : str | None
-        Preferred backend: 'numpy', 'numba', 'torch', or None (auto).
+        Preferred backend: 'numpy', 'torch', or None (auto).
         Can also be set via AUTOREJECT_BACKEND environment variable.
         If the preferred backend is not available, falls back to the next
         best option.
@@ -295,9 +282,9 @@ def get_backend(prefer=None):
     Notes
     -----
     Backend selection priority (when prefer=None):
-    1. If CUDA GPU available: PyTorch > Numba > NumPy
-    2. If MPS (Apple Silicon) available: PyTorch > Numba > NumPy
-    3. CPU only: Numba > NumPy
+    1. If CUDA GPU available: PyTorch > NumPy
+    2. If MPS (Apple Silicon) available: PyTorch > NumPy
+    3. CPU only: NumPy
     
     Examples
     --------
@@ -344,13 +331,6 @@ def get_backend(prefer=None):
     # Priority 2: Apple Silicon MPS
     if hw.get('mps'):
         backend = _try_load_backend('torch')
-        if backend is not None:
-            _BACKEND_CACHE[cache_key] = backend
-            return backend
-    
-    # Priority 3: CPU parallelization with Numba
-    if hw.get('numba'):
-        backend = _try_load_backend('numba')
         if backend is not None:
             _BACKEND_CACHE[cache_key] = backend
             return backend
@@ -402,7 +382,7 @@ def _try_load_backend(name):
     Parameters
     ----------
     name : str
-        Backend name: 'numpy', 'numba', or 'torch'.
+        Backend name: 'numpy' or 'torch'.
     
     Returns
     -------
@@ -412,8 +392,6 @@ def _try_load_backend(name):
     try:
         if name == 'numpy':
             return NumpyBackend()
-        elif name == 'numba':
-            return NumbaBackend()
         elif name == 'torch':
             return TorchBackend()
         else:
@@ -448,7 +426,7 @@ class BaseBackend:
     Attributes
     ----------
     name : str
-        Backend name ('numpy', 'numba', 'torch').
+        Backend name ('numpy', 'torch').
     device : str
         Device description ('cpu', 'cuda:0', 'mps', etc.).
     supports_gpu : bool
@@ -647,179 +625,6 @@ class NumpyBackend(BaseBackend):
         num = np.sum(x * y, axis=0)
         denom = np.sqrt(np.sum(x ** 2, axis=0)) * np.sqrt(np.sum(y ** 2, axis=0))
         result = num / denom
-        if keep_on_device:
-            return DeviceArray(result, self, 'cpu')
-        return result
-    
-    def matmul(self, a, b, keep_on_device=False):
-        """Matrix multiplication using np.matmul."""
-        a = _unwrap_device_array(a)
-        b = _unwrap_device_array(b)
-        result = np.matmul(a, b)
-        if keep_on_device:
-            return DeviceArray(result, self, 'cpu')
-        return result
-    
-    def to_numpy(self, arr):
-        """Return array as-is (already NumPy)."""
-        arr = _unwrap_device_array(arr)
-        return np.asarray(arr)
-
-
-# =============================================================================
-# Numba Backend (CPU Parallel)
-# =============================================================================
-
-class NumbaBackend(BaseBackend):
-    """Numba backend with CPU parallelization.
-    
-    Uses Numba's JIT compilation and parallel loops for acceleration.
-    Falls back to NumPy if Numba is not installed.
-    
-    Notes
-    -----
-    The first call to each method may be slower due to JIT compilation.
-    Subsequent calls will be much faster.
-    """
-    
-    name = 'numba'
-    device = 'cpu (parallel)'
-    supports_gpu = False
-    
-    def __init__(self):
-        """Initialize Numba backend."""
-        import numba
-        from numba import jit, prange
-        
-        self._numba = numba
-        self._jit = jit
-        self._prange = prange
-        
-        # Pre-compile parallel functions
-        self._ptp_3d = self._create_ptp_3d()
-        self._ptp_2d = self._create_ptp_2d()
-        self._correlation_impl = self._create_correlation()
-    
-    def _create_ptp_3d(self):
-        """Create JIT-compiled ptp for 3D arrays."""
-        from numba import jit, prange
-        
-        @jit(nopython=True, parallel=True, cache=True)
-        def _ptp_3d_impl(data):
-            n_epochs, n_channels, n_times = data.shape
-            result = np.empty((n_epochs, n_channels))
-            for i in prange(n_epochs):
-                for j in range(n_channels):
-                    min_val = data[i, j, 0]
-                    max_val = data[i, j, 0]
-                    for k in range(1, n_times):
-                        val = data[i, j, k]
-                        if val < min_val:
-                            min_val = val
-                        if val > max_val:
-                            max_val = val
-                    result[i, j] = max_val - min_val
-            return result
-        
-        return _ptp_3d_impl
-    
-    def _create_ptp_2d(self):
-        """Create JIT-compiled ptp for 2D arrays."""
-        from numba import jit, prange
-        
-        @jit(nopython=True, parallel=True, cache=True)
-        def _ptp_2d_impl(data):
-            n_rows, n_cols = data.shape
-            result = np.empty(n_rows)
-            for i in prange(n_rows):
-                min_val = data[i, 0]
-                max_val = data[i, 0]
-                for j in range(1, n_cols):
-                    val = data[i, j]
-                    if val < min_val:
-                        min_val = val
-                    if val > max_val:
-                        max_val = val
-                result[i] = max_val - min_val
-            return result
-        
-        return _ptp_2d_impl
-    
-    def _create_correlation(self):
-        """Create JIT-compiled correlation function."""
-        from numba import jit, prange
-        
-        @jit(nopython=True, parallel=True, cache=True)
-        def _corr_impl(x, y):
-            n_times, n_channels = x.shape
-            result = np.empty(n_channels)
-            for ch in prange(n_channels):
-                sum_xy = 0.0
-                sum_x2 = 0.0
-                sum_y2 = 0.0
-                for t in range(n_times):
-                    xi = x[t, ch]
-                    yi = y[t, ch]
-                    sum_xy += xi * yi
-                    sum_x2 += xi * xi
-                    sum_y2 += yi * yi
-                denom = np.sqrt(sum_x2) * np.sqrt(sum_y2)
-                if denom > 0:
-                    result[ch] = sum_xy / denom
-                else:
-                    result[ch] = 0.0
-            return result
-        
-        return _corr_impl
-    
-    def to_device(self, data):
-        """Wrap data in DeviceArray (no transfer, Numba uses CPU)."""
-        data = _unwrap_device_array(data)
-        arr = np.asarray(data)
-        return DeviceArray(arr, self, 'cpu')
-    
-    def ptp(self, data, axis=-1, keep_on_device=False):
-        """Compute peak-to-peak with Numba parallelization."""
-        data = _unwrap_device_array(data)
-        data = np.asarray(data)
-        
-        # Use optimized implementations for common cases
-        if data.ndim == 3 and axis == -1:
-            result = self._ptp_3d(data)
-        elif data.ndim == 2 and axis == -1:
-            result = self._ptp_2d(data)
-        else:
-            # Fall back to NumPy for other cases
-            result = np.ptp(data, axis=axis)
-        
-        if keep_on_device:
-            return DeviceArray(result, self, 'cpu')
-        return result
-    
-    def median(self, data, axis=None, keep_on_device=False):
-        """Compute median (falls back to NumPy)."""
-        data = _unwrap_device_array(data)
-        # Numba doesn't have a good parallel median implementation
-        result = np.median(data, axis=axis)
-        if keep_on_device:
-            return DeviceArray(result, self, 'cpu')
-        return result
-    
-    def correlation(self, x, y, keep_on_device=False):
-        """Compute correlation with Numba parallelization."""
-        x = _unwrap_device_array(x)
-        y = _unwrap_device_array(y)
-        x = np.asarray(x)
-        y = np.asarray(y)
-        
-        if x.ndim == 2 and y.ndim == 2:
-            result = self._correlation_impl(x, y)
-        else:
-            # Fall back to NumPy
-            num = np.sum(x * y, axis=0)
-            denom = np.sqrt(np.sum(x ** 2, axis=0)) * np.sqrt(np.sum(y ** 2, axis=0))
-            result = num / denom
-        
         if keep_on_device:
             return DeviceArray(result, self, 'cpu')
         return result

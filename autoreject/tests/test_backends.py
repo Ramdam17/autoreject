@@ -227,58 +227,6 @@ class TestNumpyBackend:
         assert 'cpu' in repr(backend)
 
 
-class TestNumbaBackend:
-    """Tests for Numba backend operations."""
-    
-    @pytest.fixture
-    def backend(self):
-        """Get Numba backend, skip if not available."""
-        pytest.importorskip('numba')
-        from autoreject.backends import NumbaBackend
-        return NumbaBackend()
-    
-    @pytest.fixture
-    def numpy_backend(self):
-        """Get NumPy backend for comparison."""
-        from autoreject.backends import NumpyBackend
-        return NumpyBackend()
-    
-    def test_ptp_3d_matches_numpy(self, backend, numpy_backend):
-        """Test that Numba ptp matches NumPy for 3D arrays."""
-        np.random.seed(42)
-        data = np.random.randn(10, 5, 100)
-        
-        result = backend.ptp(data, axis=-1)
-        expected = numpy_backend.ptp(data, axis=-1)
-        
-        assert_allclose(result, expected, rtol=1e-10)
-    
-    def test_ptp_2d_matches_numpy(self, backend, numpy_backend):
-        """Test that Numba ptp matches NumPy for 2D arrays."""
-        np.random.seed(42)
-        data = np.random.randn(100, 50)
-        
-        result = backend.ptp(data, axis=-1)
-        expected = numpy_backend.ptp(data, axis=-1)
-        
-        assert_allclose(result, expected, rtol=1e-10)
-    
-    def test_correlation_matches_numpy(self, backend, numpy_backend):
-        """Test that Numba correlation matches NumPy."""
-        np.random.seed(42)
-        x = np.random.randn(100, 5)
-        y = np.random.randn(100, 5)
-        
-        result = backend.correlation(x, y)
-        expected = numpy_backend.correlation(x, y)
-        
-        assert_allclose(result, expected, rtol=1e-10)
-    
-    def test_device_indicates_parallel(self, backend):
-        """Test that device string indicates parallelization."""
-        assert 'parallel' in backend.device.lower() or 'cpu' in backend.device.lower()
-
-
 class TestTorchBackend:
     """Tests for PyTorch backend operations."""
     

@@ -45,9 +45,6 @@ dependencies = [
 # project.dependencies
 
 # Acceleration backends for improved performance
-parallel = [
-    "numba >= 0.57, < 1.0",  # CPU parallelization with JIT compilation
-]
 gpu = [
     "torch >= 2.0",  # GPU acceleration (CUDA/MPS)
 ]
@@ -55,10 +52,6 @@ benchmark = [
     "pytest-benchmark",  # Performance benchmarking
     "psutil",  # System resource monitoring
     "memory-profiler",  # Memory usage profiling
-]
-# All acceleration features
-accel = [
-    "autoreject[parallel]",
 ]
 
 test = [
