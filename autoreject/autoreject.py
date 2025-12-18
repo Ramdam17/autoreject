@@ -1168,8 +1168,9 @@ def _run_local_reject_cv(
     assert len(local_reject.consensus_) == 1  # works with one ch_type
     ch_type = next(iter(local_reject.consensus_))
 
-    labels, bad_sensor_counts = local_reject._vote_bad_epochs(epochs, picks=picks_)
-    desc = "n_interp"
+    labels, bad_sensor_counts = \
+        local_reject._vote_bad_epochs(epochs, picks=picks_)
+    desc = 'n_interp'
 
     for jdx, n_interp in enumerate(
         _pbar(n_interpolate, desc=desc, position=1, verbose=verbose)
