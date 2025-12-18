@@ -9,15 +9,6 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from autoreject.backends import use_backend, is_device_array
-
-
-@pytest.fixture(autouse=True)
-def setup_torch_backend():
-    """Force torch backend for all tests in this module."""
-    with use_backend('torch'):
-        yield
-
-
 from autoreject.gpu_interpolation import (
     legval_torch,
     _calc_g_torch,
@@ -25,6 +16,13 @@ from autoreject.gpu_interpolation import (
     gpu_make_interpolation_matrix,
     gpu_do_interp_dots,
 )
+
+
+@pytest.fixture(autouse=True)
+def setup_torch_backend():
+    """Force torch backend for all tests in this module."""
+    with use_backend('torch'):
+        yield
 
 
 class TestLegvalTorch:
