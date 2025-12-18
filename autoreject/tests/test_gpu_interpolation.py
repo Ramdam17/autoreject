@@ -8,8 +8,8 @@ import pytest
 # Skip all tests if torch is not available
 torch = pytest.importorskip("torch")
 
-from autoreject.backends import use_backend, is_device_array
-from autoreject.gpu_interpolation import (
+from autoreject.backends import use_backend, is_device_array  # noqa: E402
+from autoreject.gpu_interpolation import (  # noqa: E402
     legval_torch,
     _calc_g_torch,
     _normalize_vectors_torch,
