@@ -23,34 +23,19 @@ from sklearn.model_selection import RandomizedSearchCV
 from sklearn.model_selection import KFold, StratifiedShuffleSplit
 from sklearn.model_selection import cross_val_score, check_cv
 
-from .utils import (
-    _clean_by_interp,
-    interpolate_bads,
-    _get_epochs_type,
-    _pbar,
-    _handle_picks,
-    _check_data,
-    _compute_dots,
-    _get_picks_by_type,
-    _pprint,
-    _GDKW,
-)
+from .utils import (_clean_by_interp, interpolate_bads, _get_epochs_type,
+                    _pbar, _handle_picks, _check_data, _compute_dots,
+                    _get_picks_by_type, _pprint, _GDKW)
 from .bayesopt import expected_improvement, bayes_opt
 from .backends import get_backend
 
 
-_INIT_PARAMS = (
-    "consensus",
-    "n_interpolate",
-    "picks",
-    "verbose",
-    "n_jobs",
-    "cv",
-    "random_state",
-    "thresh_method",
-)
+_INIT_PARAMS = ('consensus', 'n_interpolate', 'picks',
+                'verbose', 'n_jobs', 'cv', 'random_state',
+                'thresh_method')
 
-_FIT_PARAMS = ("threshes_", "n_interpolate_", "consensus_", "dots", "picks_", "loss_")
+_FIT_PARAMS = ('threshes_', 'n_interpolate_', 'consensus_',
+               'dots', 'picks_', 'loss_')
 
 
 def _slicemean(obj, this_slice, axis):
@@ -116,16 +101,10 @@ def validation_curve(epochs, y=None, param_name="thresh", param_range=None,
     estimator.n_channels = n_channels
     estimator.n_times = n_times
 
-    train_scores, test_scores = validation_curve(
-        estimator,
-        X.reshape(n_epochs, -1),
-        y=y,
-        param_name="thresh",
-        param_range=param_range,
-        cv=cv,
-        n_jobs=n_jobs,
-        verbose=0,
-    )
+    train_scores, test_scores = \
+        validation_curve(estimator, X.reshape(n_epochs, -1), y=y,
+                         param_name="thresh", param_range=param_range,
+                         cv=cv, n_jobs=n_jobs, verbose=0)
 
     out = (train_scores, test_scores)
     if return_param_range:
@@ -165,11 +144,9 @@ def read_reject_log(fname):
     reject_log : instance of autoreject.RejectLog
     """
     reject_log_data = np.load(fname)
-    reject_log = RejectLog(
-        bad_epochs=reject_log_data["bad_epochs"],
-        labels=reject_log_data["labels"],
-        ch_names=reject_log_data["ch_names"],
-    )
+    reject_log = RejectLog(bad_epochs=reject_log_data['bad_epochs'],
+                           labels=reject_log_data['labels'],
+                           ch_names=reject_log_data['ch_names'])
     return reject_log
 
 
@@ -228,9 +205,8 @@ class _GlobalAutoReject(BaseAutoReject):
         return self
 
 
-def get_rejection_threshold(
-    epochs, decim=1, random_state=None, ch_types=None, cv=5, verbose=True
-):
+def get_rejection_threshold(epochs, decim=1, random_state=None,
+                            ch_types=None, cv=5, verbose=True):
     """Compute global rejection thresholds.
 
     Parameters
@@ -847,9 +823,8 @@ class _AutoReject(BaseAutoReject):
             bad_sensor_counts, ch_type=ch_type, picks=this_picks
         )
 
-        reject_log = RejectLog(
-            labels=labels, bad_epochs=bad_epochs, ch_names=epochs.ch_names
-        )
+        reject_log = RejectLog(labels=labels, bad_epochs=bad_epochs,
+                               ch_names=epochs.ch_names)
         return reject_log
 
     def fit(self, epochs):
@@ -1625,11 +1600,9 @@ class AutoReject:
         ch_names = [cc for cc in epochs.ch_names]
         labels = np.ones((len(epochs), len(ch_names)))
         labels.fill(np.nan)
-        reject_log = RejectLog(
-            labels=labels,
-            bad_epochs=np.zeros(len(epochs), dtype=bool),
-            ch_names=ch_names,
-        )
+        reject_log = RejectLog(labels=labels,
+                               bad_epochs=np.zeros(len(epochs), dtype=bool),
+                               ch_names=ch_names)
 
         picks_by_type = _get_picks_by_type(info=epochs.info, picks=self.picks_)
         for ch_type, this_picks in picks_by_type:
