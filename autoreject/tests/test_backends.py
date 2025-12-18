@@ -4,7 +4,7 @@ These tests verify that all backends produce correct and consistent results.
 They also test the fallback mechanisms and environment variable configuration.
 """
 
-# Authors: autoreject contributors
+# Author: Rémy Ramadour <remy.ramadour.labs@gmail.com>
 
 import pytest
 import numpy as np

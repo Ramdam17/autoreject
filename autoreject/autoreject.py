@@ -753,7 +753,9 @@ class _AutoReject(BaseAutoReject):
         data_local = data
         if data_local is None:
             # Check if any epoch needs PTP computation (n_bads > n_interpolate)
-            n_bads_per_epoch = np.sum(labels[:, picks] == 1, axis=1)
+            # Note: we check ALL channels (not just picks) because interp_chs_mask
+            # operates on all channels
+            n_bads_per_epoch = np.sum(labels == 1, axis=1)
             needs_ptp = np.any(n_bads_per_epoch > n_interpolate)
             if needs_ptp:
                 data_local = epochs.get_data(**_GDKW)

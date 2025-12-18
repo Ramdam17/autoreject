@@ -1,5 +1,7 @@
 """Tests for GPU interpolation module."""
 
+# Author: Rémy Ramadour <remy.ramadour.labs@gmail.com>
+
 import numpy as np
 import pytest
 
