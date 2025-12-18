@@ -146,7 +146,7 @@ class Ransac(object):
 
     def _compute_correlations(self, data, backend=None):
         """Compute correlation between prediction and real data.
-        
+
         Parameters
         ----------
         data : ndarray, shape (n_channels, n_times)
@@ -154,7 +154,7 @@ class Ransac(object):
         backend : Backend | None
             Compute backend to use for correlation computation.
             If None, auto-detect the best available backend.
-        
+
         Returns
         -------
         corr : ndarray, shape (n_channels,)
@@ -162,7 +162,7 @@ class Ransac(object):
         """
         if backend is None:
             backend = get_backend()
-        
+
         mappings = self.mappings_
         n_channels, n_times = data.shape
 
@@ -175,7 +175,7 @@ class Ransac(object):
         # Isn't really the median if n_resample even
         y_pred = backend.median(y_pred, axis=-1)
         y_pred = backend.to_numpy(y_pred)
-        
+
         # compute correlation using backend
         # data.T shape: (n_times, n_channels)
         # y_pred shape: (n_times, n_channels)
