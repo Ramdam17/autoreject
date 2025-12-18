@@ -49,3 +49,6 @@ benchmarks/results/
 benchmarks/logs/
 benchmarks/figures/
 benchmarks/orchestrator_log_*.json
+
+# Claude Code user-specific settings
+.claude/settings.local.json
