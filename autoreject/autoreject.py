@@ -60,15 +60,8 @@ def _slicemean(obj, this_slice, axis):
     return mean
 
 
-def validation_curve(
-    epochs,
-    y=None,
-    param_name="thresh",
-    param_range=None,
-    cv=None,
-    return_param_range=False,
-    n_jobs=1,
-):
+def validation_curve(epochs, y=None, param_name="thresh", param_range=None,
+                     cv=None, return_param_range=False, n_jobs=1):
     """Validation curve on epochs for global autoreject.
 
     Parameters
