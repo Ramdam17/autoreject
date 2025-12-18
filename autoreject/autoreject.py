@@ -1032,7 +1032,6 @@ def _interpolate_bad_epochs_gpu(
         device = backend.device
 
     picks = np.asarray(picks)
-    len(picks)
 
     # Get positions for picked channels
     pos = epochs._get_channel_positions(picks)
