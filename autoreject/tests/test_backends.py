@@ -709,3 +709,119 @@ class TestMultiBackendConsistency:
         )
         assert n_interp_numpy == n_interp_torch, \
             f"n_interpolate differs: {n_interp_numpy} vs {n_interp_torch}"
+
+    def test_reject_log_consistency_across_backends(self):
+        """Test that reject_log works correctly with both backends.
+
+        This test verifies that reject_log structure and plot() method work
+        correctly with both numpy and torch backends, and that the results
+        are identical between backends.
+        """
+        import mne
+        from autoreject import AutoReject
+
+        # Skip if torch backend not available
+        if 'torch' not in get_backend_names():
+            pytest.skip("PyTorch backend not available")
+
+        # Create small synthetic dataset
+        n_epochs = 20
+        n_times = 100
+        sfreq = 100
+        ch_names = ['Fp1', 'Fp2', 'F3', 'F4', 'C3', 'C4', 'P3', 'P4']
+        n_channels = len(ch_names)
+        ch_types = ['eeg'] * n_channels
+        info = mne.create_info(ch_names, sfreq, ch_types=ch_types)
+
+        # Add montage for interpolation
+        montage = mne.channels.make_standard_montage('standard_1020')
+        info.set_montage(montage)
+
+        # Synthetic data with artifacts
+        rng = np.random.RandomState(42)
+        data = rng.randn(n_epochs, n_channels, n_times) * 1e-6
+        data[5, 2, :] += 50e-6  # Large artifact
+        data[10, :, :] *= 3     # Noisy epoch
+
+        # Create events
+        events = np.column_stack([
+            np.arange(0, n_epochs * n_times, n_times),
+            np.zeros(n_epochs, dtype=int),
+            np.ones(n_epochs, dtype=int)
+        ])
+        epochs = mne.EpochsArray(data, info, events, tmin=0, verbose=False)
+
+        # Test with numpy backend
+        with use_backend('numpy'):
+            ar_numpy = AutoReject(
+                n_interpolate=[1, 2],
+                consensus=np.linspace(0, 1.0, 3),
+                cv=3,
+                random_state=42,
+                verbose=False
+            )
+            ar_numpy.fit(epochs)
+            reject_log_numpy = ar_numpy.get_reject_log(epochs)
+
+            # Verify reject_log structure
+            assert hasattr(reject_log_numpy, 'labels')
+            assert hasattr(reject_log_numpy, 'bad_epochs')
+            assert hasattr(reject_log_numpy, 'ch_names')
+            assert reject_log_numpy.labels.shape == (n_epochs, n_channels)
+            assert len(reject_log_numpy.bad_epochs) == n_epochs
+            assert reject_log_numpy.ch_names == ch_names
+
+            # Test plot (just ensure it runs without error)
+            try:
+                import matplotlib
+                matplotlib.use('Agg')  # Non-interactive backend
+                fig = reject_log_numpy.plot('horizontal')
+                import matplotlib.pyplot as plt
+                plt.close(fig)
+            except ImportError:
+                pass  # matplotlib not available
+
+        # Test with torch backend
+        with use_backend('torch'):
+            ar_torch = AutoReject(
+                n_interpolate=[1, 2],
+                consensus=np.linspace(0, 1.0, 3),
+                cv=3,
+                random_state=42,
+                verbose=False
+            )
+            ar_torch.fit(epochs)
+            reject_log_torch = ar_torch.get_reject_log(epochs)
+
+            # Verify reject_log structure
+            assert hasattr(reject_log_torch, 'labels')
+            assert hasattr(reject_log_torch, 'bad_epochs')
+            assert hasattr(reject_log_torch, 'ch_names')
+            assert reject_log_torch.labels.shape == (n_epochs, n_channels)
+            assert len(reject_log_torch.bad_epochs) == n_epochs
+            assert reject_log_torch.ch_names == ch_names
+
+            # Test plot
+            try:
+                import matplotlib
+                matplotlib.use('Agg')
+                fig = reject_log_torch.plot('horizontal')
+                import matplotlib.pyplot as plt
+                plt.close(fig)
+            except ImportError:
+                pass
+
+        # Compare reject_logs between backends
+        # Labels should be identical (0=good, 1=bad, 2=interpolated)
+        assert_array_equal(
+            reject_log_numpy.labels,
+            reject_log_torch.labels,
+            err_msg="reject_log.labels differ between backends"
+        )
+
+        # Bad epochs should be identical
+        assert_array_equal(
+            reject_log_numpy.bad_epochs,
+            reject_log_torch.bad_epochs,
+            err_msg="reject_log.bad_epochs differ between backends"
+        )
