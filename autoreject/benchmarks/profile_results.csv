@@ -1,0 +1,2 @@
+profile,device,peak_mem_mb,batched_cv_loss,bayesian_optimization,cosine_angle_matrix,cv_median_computation,cv_scoring_loop,data_transfer_to_gpu,legendre_g_matrix,loocv_interp_matrices,per_epoch_interpolation,position_normalization,ptp_computation,threshold_tensor_build,total_ms
+realistic,mps,0.2,1283.17,655.77,0.04,928.89,1568.56,52.57,1.17,212.27,941.34,0.08,33.48,0.78,5678.11
