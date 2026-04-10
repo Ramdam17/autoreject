@@ -1,0 +1,280 @@
+# ======================================================================
+# AutoReject GPU Benchmark Configuration
+# ======================================================================
+# Based on original config (commit 7409d3c) + new optimization backends.
+#
+# Usage:
+#   python -m benchmarks.run --suite quick
+#   python -m benchmarks.run --suite real_data scaling
+#   python -m benchmarks.run --suite variance --seeds 15
+#   python -m benchmarks.run --suite all
+
+# --- Global settings ---
+global:
+  random_state: 42
+  warmup_runs: 1
+  timing_runs: 3
+  timeout_minutes: 60
+  save_incremental: true
+  output_dir: results
+  log_level: INFO
+
+# --- Backend definitions ---
+backends:
+  numpy_cpu:
+    label: "NumPy CPU (baseline)"
+    env_backend: numpy
+    device: cpu
+    precision: float64
+    requires: []
+    use_argmin: false
+
+  torch_gpu:
+    label: "PyTorch GPU (current)"
+    env_backend: torch
+    device: auto
+    precision: auto
+    requires: [torch]
+    use_argmin: false
+
+  torch_gpu_argmin:
+    label: "PyTorch GPU + argmin"
+    env_backend: torch
+    device: auto
+    precision: auto
+    requires: [torch]
+    use_argmin: true
+
+  metal_kernel:
+    label: "Metal fused kernel (MPS)"
+    env_backend: torch
+    device: mps
+    precision: float32
+    requires: [torch, Metal]
+    use_argmin: true
+    use_kernel: true
+
+  cuda_kernel:
+    label: "CUDA fused kernel (NVIDIA)"
+    env_backend: torch
+    device: cuda
+    precision: float64
+    requires: [torch, cupy]
+    use_argmin: true
+    use_kernel: true
+
+# --- Presets ---
+presets:
+  n_interpolate:
+    light: [1, 4]
+    medium: [1, 4, 8]
+    aggressive: [1, 2, 4, 8, 12, 16]
+  consensus:
+    light: [0.1, 0.3, 0.5]
+    standard: [0.1, 0.2, 0.3, 0.4, 0.5]
+
+# ======================================================================
+# Benchmark Suites
+# ======================================================================
+
+suites:
+
+  # --- Smoke test (< 2 min) ---
+  quick:
+    - name: smoke_32ch
+      source: synthetic
+      n_channels: 32
+      sfreq: 250
+      epoch_duration: 1.0
+      recording_duration_min: 2
+      cv_folds: 5
+      n_interpolate: light
+      consensus: light
+      artifact_pct: 0.3
+      backends: all
+
+  # --- Real datasets ---
+  real_data:
+    - name: mne_sample_eeg
+      source: mne_sample
+      description: "MNE sample dataset, EEG only"
+      cv_folds: 10
+      n_interpolate: medium
+      consensus: standard
+      backends: all
+
+    - name: ds002778_parkinson
+      source: ds002778
+      subject: pd14
+      session: "off"
+      epoch_duration: 3.0
+      description: "Parkinson resting-state, 32ch Biosemi"
+      cv_folds: 10
+      n_interpolate: medium
+      consensus: standard
+      backends: all
+
+    - name: ds000117_face
+      source: ds000117
+      subject: "16"
+      runs: [3, 4, 5, 6]
+      tmin: -0.2
+      tmax: 0.8
+      description: "Face recognition, ~60 EEG channels"
+      cv_folds: 10
+      n_interpolate: medium
+      consensus: standard
+      backends: all
+
+  # --- Scaling analysis ---
+  scaling:
+    # Vary channels
+    - name: scale_32ch
+      source: synthetic
+      n_channels: 32
+      sfreq: 500
+      epoch_duration: 2.0
+      recording_duration_min: 10
+      cv_folds: 10
+      n_interpolate: medium
+      consensus: standard
+      artifact_pct: 0.3
+      backends: all
+
+    - name: scale_64ch
+      source: synthetic
+      n_channels: 64
+      sfreq: 500
+      epoch_duration: 2.0
+      recording_duration_min: 10
+      cv_folds: 10
+      n_interpolate: medium
+      consensus: standard
+      artifact_pct: 0.3
+      backends: all
+
+    - name: scale_128ch
+      source: synthetic
+      n_channels: 128
+      sfreq: 500
+      epoch_duration: 2.0
+      recording_duration_min: 10
+      cv_folds: 10
+      n_interpolate: medium
+      consensus: standard
+      artifact_pct: 0.3
+      backends: all
+
+    # Vary duration (→ epoch count)
+    - name: scale_5min
+      source: synthetic
+      n_channels: 64
+      sfreq: 500
+      epoch_duration: 2.0
+      recording_duration_min: 5
+      cv_folds: 10
+      n_interpolate: medium
+      consensus: standard
+      artifact_pct: 0.3
+      backends: all
+
+    - name: scale_10min
+      source: synthetic
+      n_channels: 64
+      sfreq: 500
+      epoch_duration: 2.0
+      recording_duration_min: 10
+      cv_folds: 10
+      n_interpolate: medium
+      consensus: standard
+      artifact_pct: 0.3
+      backends: all
+
+    - name: scale_20min
+      source: synthetic
+      n_channels: 64
+      sfreq: 500
+      epoch_duration: 2.0
+      recording_duration_min: 20
+      cv_folds: 10
+      n_interpolate: medium
+      consensus: standard
+      artifact_pct: 0.3
+      backends: all
+
+    # Vary artifact level
+    - name: scale_clean_10pct
+      source: synthetic
+      n_channels: 64
+      sfreq: 500
+      epoch_duration: 2.0
+      recording_duration_min: 10
+      cv_folds: 10
+      n_interpolate: medium
+      consensus: standard
+      artifact_pct: 0.1
+      backends: all
+
+    - name: scale_noisy_30pct
+      source: synthetic
+      n_channels: 64
+      sfreq: 500
+      epoch_duration: 2.0
+      recording_duration_min: 10
+      cv_folds: 10
+      n_interpolate: medium
+      consensus: standard
+      artifact_pct: 0.3
+      backends: all
+
+    # High-density
+    - name: scale_highdensity_128ch
+      source: synthetic
+      n_channels: 128
+      sfreq: 500
+      epoch_duration: 2.0
+      recording_duration_min: 10
+      cv_folds: 10
+      n_interpolate: aggressive
+      consensus: standard
+      artifact_pct: 0.3
+      backends: all
+
+  # --- Variance / reproducibility ---
+  variance:
+    - name: var_32ch
+      source: synthetic
+      n_channels: 32
+      sfreq: 500
+      epoch_duration: 2.0
+      recording_duration_min: 10
+      cv_folds: 10
+      n_interpolate: medium
+      consensus: standard
+      artifact_pct: 0.3
+      n_seeds: 15
+      seed_start: 42
+      backends: [numpy_cpu, torch_gpu, torch_gpu_argmin]
+
+    - name: var_64ch
+      source: synthetic
+      n_channels: 64
+      sfreq: 500
+      epoch_duration: 2.0
+      recording_duration_min: 10
+      cv_folds: 10
+      n_interpolate: medium
+      consensus: standard
+      artifact_pct: 0.3
+      n_seeds: 15
+      seed_start: 42
+      backends: [numpy_cpu, torch_gpu, torch_gpu_argmin]
+
+    - name: var_mne_sample
+      source: mne_sample
+      cv_folds: 10
+      n_interpolate: medium
+      consensus: standard
+      n_seeds: 15
+      seed_start: 42
+      backends: [numpy_cpu, torch_gpu, torch_gpu_argmin]
