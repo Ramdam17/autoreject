@@ -1135,7 +1135,12 @@ class AutoReject:
         that channels in ``info['bads']`` *will be included* if their names
         or indices are explicitly provided.
     thresh_method : str
-        'bayesian_optimization' or 'random_search'
+        'bayesian_optimization', 'random_search', or 'gpu_argmin'.
+        'gpu_argmin' selects thresholds via exact argmin on pre-computed
+        GPU losses (deterministic, no Bayesian optimization).
+    use_kernel : bool
+        If True, use Metal/CUDA fused kernels for CV loss computation
+        when available. Only applies to GPU backends.
     n_jobs : int
         The number of jobs.
     random_state : int | np.random.RandomState | None
@@ -1182,12 +1187,14 @@ class AutoReject:
     def __init__(self, n_interpolate=None, consensus=None,
                  thresh_func=None, cv=10, picks=None,
                  thresh_method="bayesian_optimization",
+                 use_kernel=False,
                  n_jobs=1, random_state=None, verbose=True,
                  device="auto"):
         """Initialize the AutoReject class."""
         self.n_interpolate = n_interpolate
         self.consensus = consensus
         self.thresh_method = thresh_method
+        self.use_kernel = use_kernel
         self.cv = cv
         self.verbose = verbose
         self.picks = picks
@@ -1347,7 +1354,8 @@ class AutoReject:
             thresh_func = partial(compute_thresholds_gpu,
                                   method=self.thresh_method,
                                   random_state=self.random_state,
-                                  device=device)
+                                  device=device,
+                                  use_kernel=self.use_kernel)
             if self.verbose:
                 print(f"Using GPU acceleration (device={device})")
         else:
@@ -1383,7 +1391,8 @@ class AutoReject:
                                                   self.n_interpolate, self.cv_,
                                                   self.consensus, self.dots,
                                                   self.verbose, n_jobs=self.n_jobs,
-                                                  device=device)
+                                                  device=device,
+                                                  use_kernel=self.use_kernel)
             else:
                 this_local_reject, this_loss = \
                     _run_local_reject_cv(epochs, thresh_func, this_picks,

@@ -147,6 +147,79 @@ class GPUThresholdOptimizer:
         """Clear the tensor cache."""
         self._cache.clear()
 
+    def _try_kernel_cv_loss(self, data_all_channels, ptp_all, threshes_all,
+                            cv_splits):
+        """Try to compute CV loss using a fused Metal or CUDA kernel.
+
+        Falls back to None if no kernel is available, letting the caller
+        use the standard PyTorch BMM path.
+
+        Returns
+        -------
+        all_losses : torch.Tensor or None
+            Shape (n_channels, n_thresh) if kernel succeeded, None otherwise.
+        """
+        n_epochs, n_channels, n_times = data_all_channels.shape
+        n_thresh = threshes_all.shape[1]
+        n_folds = len(cv_splits)
+
+        # Determine which kernel to use
+        kernel_fn = None
+        if self.device == "mps":
+            try:
+                from .kernels import METAL_AVAILABLE
+                if METAL_AVAILABLE:
+                    from .kernels.metal_thresh_cv import metal_batched_cv_loss
+                    kernel_fn = metal_batched_cv_loss
+            except ImportError:
+                pass
+        elif str(self.device).startswith("cuda"):
+            try:
+                from .kernels import CUPY_AVAILABLE
+                if CUPY_AVAILABLE:
+                    from .kernels.cuda_thresh_cv import cuda_batched_cv_loss
+                    kernel_fn = cuda_batched_cv_loss
+            except ImportError:
+                pass
+
+        if kernel_fn is None:
+            return None
+
+        # Pre-compute medians and run kernel per fold
+        fold_losses = self.torch.zeros(
+            (n_folds, n_channels, n_thresh), device=self.device
+        )
+
+        for fold_idx, (train_idx, test_idx) in enumerate(cv_splits):
+            train_idx_t = self.torch.tensor(
+                train_idx, device=self.device, dtype=self.torch.long
+            )
+            test_idx_t = self.torch.tensor(
+                test_idx, device=self.device, dtype=self.torch.long
+            )
+
+            # Extract fold data
+            data_train = data_all_channels[train_idx_t]
+            ptp_train = ptp_all[train_idx_t]
+            data_test = data_all_channels[test_idx_t]
+            median_test = _torch_median(data_test, dim=0)
+
+            # Convert to numpy for kernel (kernels work with numpy I/O)
+            data_train_np = data_train.cpu().numpy()
+            ptp_train_np = ptp_train.cpu().numpy()
+            threshes_np = threshes_all.cpu().numpy()
+            median_np = median_test.cpu().numpy()
+
+            # Call kernel
+            rmse_np = kernel_fn(data_train_np, ptp_train_np,
+                                threshes_np, median_np)
+
+            fold_losses[fold_idx] = self.torch.tensor(
+                rmse_np, device=self.device
+            )
+
+        return fold_losses.mean(dim=0)
+
     def compute_ptp_1d(self, data):
         """
         Compute peak-to-peak for single-channel data.
@@ -282,12 +355,17 @@ class GPUThresholdOptimizer:
         return fold_losses.mean(dim=0)
 
     def batched_all_channels_cv_loss_parallel(
-        self, data_all_channels, ptp_all, threshes_all, cv_splits
+        self, data_all_channels, ptp_all, threshes_all, cv_splits,
+        use_kernel=False
     ):
         """Compute cross-validated loss for ALL channels and thresholds.
 
         FULLY PARALLEL VERSION: uses torch.bmm() instead of 4D broadcast
         for memory efficiency and pre-computes medians before the fold loop.
+
+        When use_kernel=True and a Metal or CUDA kernel is available,
+        delegates each fold's computation to the fused kernel which
+        eliminates intermediate tensors entirely.
 
         Parameters
         ----------
@@ -300,12 +378,21 @@ class GPUThresholdOptimizer:
             thresholds (its sorted PTP values).
         cv_splits : list of (train_idx, test_idx) tuples
             Cross-validation split indices.
+        use_kernel : bool
+            If True, use Metal/CUDA fused kernel when available.
 
         Returns
         -------
         all_losses : torch.Tensor, shape (n_channels, n_thresh)
             CV loss for each channel and each threshold.
         """
+        # Try fused kernel path if requested
+        if use_kernel:
+            kernel_result = self._try_kernel_cv_loss(
+                data_all_channels, ptp_all, threshes_all, cv_splits
+            )
+            if kernel_result is not None:
+                return kernel_result
         n_epochs, n_channels, n_times = data_all_channels.shape
         n_thresh = threshes_all.shape[1]
         n_folds = len(cv_splits)
@@ -520,6 +607,7 @@ class GPUThresholdOptimizer:
         y,
         method="bayesian_optimization",
         random_state=None,
+        use_kernel=False,
     ):
         """
         Compute optimal thresholds for ALL channels using GPU - batch version.
@@ -546,44 +634,68 @@ class GPUThresholdOptimizer:
         best_thresholds : ndarray, shape (n_channels,)
             Optimal threshold for each channel.
         """
-        from .bayesopt import bayes_opt, expected_improvement
-
         n_epochs, n_channels, n_times = data_all_channels.shape
 
         # Step 1: Compute PTP for all channels (on GPU)
         ptp_all = (
             data_all_channels.max(dim=-1).values - data_all_channels.min(dim=-1).values
         )
-        ptp_all_np = ptp_all.cpu().numpy()  # (n_epochs, n_channels)
 
-        # Step 2: Build thresholds tensor
-        # All channels have same n_thresh = n_epochs
-        # threshes_all: (n_channels, n_epochs), sorted PTPs per channel
-        threshes_all_np = np.zeros((n_channels, n_epochs))
-        for ch_idx in range(n_channels):
-            threshes_all_np[ch_idx] = np.sort(ptp_all_np[:, ch_idx])
-        threshes_all = self._to_tensor(threshes_all_np)
+        # Step 2: Build thresholds tensor (on GPU when using gpu_argmin)
+        if method == "gpu_argmin":
+            # Stay fully on GPU: sort PTP values on device
+            ptp_transposed = ptp_all.T  # (n_channels, n_epochs)
+            threshes_all, _ = self.torch.sort(ptp_transposed, dim=1)
+        else:
+            ptp_all_np = ptp_all.cpu().numpy()
+            threshes_all_np = np.zeros((n_channels, n_epochs))
+            for ch_idx in range(n_channels):
+                threshes_all_np[ch_idx] = np.sort(ptp_all_np[:, ch_idx])
+            threshes_all = self._to_tensor(threshes_all_np)
 
         # Step 3: Compute CV losses for ALL channels and ALL thresholds
-        # Key optimization: one big GPU kernel, not n_channels separate ones
         all_losses = self.batched_all_channels_cv_loss_parallel(
-            data_all_channels, ptp_all, threshes_all, cv_splits
+            data_all_channels, ptp_all, threshes_all, cv_splits,
+            use_kernel=use_kernel,
         )  # (n_channels, n_thresh)
 
-        all_losses_np = all_losses.cpu().numpy()
+        # Step 4: Select optimal threshold per channel
+        if method == "gpu_argmin":
+            # Exact argmin — fully on GPU, deterministic
+            best_idx = self.torch.argmin(all_losses, dim=1)
+            best_thresholds_gpu = threshes_all[
+                self.torch.arange(n_channels, device=self.device), best_idx
+            ]
+            return best_thresholds_gpu.cpu().numpy()
 
-        # Step 4: For each channel, run Bayesian optimization with cached losses
-        best_thresholds = np.zeros(n_channels)
-
-        for ch_idx in range(n_channels):
-            all_threshes = threshes_all_np[ch_idx]
-            losses_np = all_losses_np[ch_idx]
-
-            if method == "random_search":
-                best_idx = np.argmin(losses_np)
-                best_thresholds[ch_idx] = all_threshes[best_idx]
+        elif method == "random_search":
+            # CPU argmin on pre-computed losses (original behavior)
+            all_losses_np = all_losses.cpu().numpy()
+            if not isinstance(threshes_all, np.ndarray):
+                threshes_all_np = threshes_all.cpu().numpy()
             else:
-                # Bayesian optimization with cached losses
+                threshes_all_np = threshes_all
+            best_thresholds = np.zeros(n_channels)
+            for ch_idx in range(n_channels):
+                best_idx = np.argmin(all_losses_np[ch_idx])
+                best_thresholds[ch_idx] = threshes_all_np[ch_idx, best_idx]
+            return best_thresholds
+
+        else:
+            # Bayesian optimization with cached losses (original behavior)
+            from .bayesopt import bayes_opt, expected_improvement
+
+            all_losses_np = all_losses.cpu().numpy()
+            ptp_all_np = ptp_all.cpu().numpy()
+            threshes_all_np = np.zeros((n_channels, n_epochs))
+            for ch_idx in range(n_channels):
+                threshes_all_np[ch_idx] = np.sort(ptp_all_np[:, ch_idx])
+
+            best_thresholds = np.zeros(n_channels)
+            for ch_idx in range(n_channels):
+                all_threshes = threshes_all_np[ch_idx]
+                losses_np = all_losses_np[ch_idx]
+
                 loss_cache = {
                     thresh: loss for thresh, loss in zip(all_threshes, losses_np)
                 }
@@ -614,7 +726,7 @@ class GPUThresholdOptimizer:
                 )
                 best_thresholds[ch_idx] = best_thresh
 
-        return best_thresholds
+            return best_thresholds
 
     def compute_thresh_gpu(
         self,
@@ -754,6 +866,7 @@ def compute_thresholds_gpu(
     n_jobs=1,
     device=None,
     dots=None,
+    use_kernel=False,
 ):
     """
     Compute channel-wise thresholds using GPU acceleration.
@@ -836,7 +949,8 @@ def compute_thresholds_gpu(
 
     # Compute all thresholds in one batch operation
     best_thresholds = optimizer.compute_all_thresholds_gpu(
-        data_gpu, picks, cv_splits, y, method=method, random_state=random_state
+        data_gpu, picks, cv_splits, y, method=method,
+        random_state=random_state, use_kernel=use_kernel,
     )
 
     # Build the threshes dict
@@ -1269,6 +1383,7 @@ def run_local_reject_cv_gpu_batch(
     verbose=True,
     n_jobs=1,
     device=None,
+    use_kernel=False,
 ):
     """
     FULLY BATCHED GPU version of _run_local_reject_cv.
@@ -1411,6 +1526,16 @@ def run_local_reject_cv_gpu_batch(
     cv_splits = list(cv.split(np.zeros(len(epochs))))
 
     # Batch process all n_interp values and folds
+    # Import batched scoring for the einsum optimization
+    try:
+        from .kernels.batched_scoring import (
+            build_consensus_weights,
+            batched_consensus_score,
+        )
+        _has_batched_scoring = True
+    except ImportError:
+        _has_batched_scoring = False
+
     for jdx, n_interp in enumerate(n_interpolate):
         X_interp_picks_gpu = X_interp_all_gpu[jdx]
 
@@ -1422,49 +1547,74 @@ def run_local_reject_cv_gpu_batch(
             X_test = X_picks_gpu[test_t]
             median_X = _torch_median(X_test, dim=0)
 
-            # Allocate tensor for all scores in this fold
-            scores_gpu = optimizer.torch.zeros(
-                n_consensus_values, device=optimizer.device
-            )
+            n_channels = len(picks_)
 
-            for idx, this_consensus in enumerate(consensus):
-                n_channels = len(picks_)
-                if this_consensus * n_channels <= n_interp:
-                    scores_gpu[idx] = float("-inf")
-                    continue
+            # Index into interpolated training data (shared across consensus)
+            X_train_interp = X_interp_picks_gpu[train_t]
 
-                local_reject.consensus_[ch_type] = this_consensus
-                bad_epochs = local_reject._get_bad_epochs(
-                    bad_sensor_counts[train], picks=picks_, ch_type=ch_type
+            if _has_batched_scoring and use_kernel:
+                # BATCHED SCORING: all consensus values in one einsum
+                weights, valid_mask = build_consensus_weights(
+                    bad_sensor_counts[train], consensus, n_channels, picks_,
+                )
+                # Invalidate consensus values where κ·Q <= n_interp
+                for idx, this_consensus in enumerate(consensus):
+                    if this_consensus * n_channels <= n_interp:
+                        valid_mask[idx] = False
+                        weights[idx, :] = 0.0
+
+                weights_gpu = optimizer.torch.tensor(
+                    weights, device=optimizer.device
+                )
+                scores_np = batched_consensus_score(
+                    X_train_interp, median_X, weights_gpu,
+                    valid_mask, optimizer.torch,
                 )
 
-                good_epochs_idx = np.nonzero(np.invert(bad_epochs))[0]
-
-                if len(good_epochs_idx) == 0:
-                    scores_gpu[idx] = float("-inf")
-                    continue
-
-                good_idx_t = optimizer.torch.tensor(
-                    good_epochs_idx, device=optimizer.device
+                for idx in range(n_consensus_values):
+                    if scores_np[idx] == float("-inf"):
+                        loss[idx, jdx, fold] = np.inf
+                    else:
+                        loss[idx, jdx, fold] = -scores_np[idx]
+            else:
+                # SEQUENTIAL SCORING: original per-consensus loop
+                scores_gpu = optimizer.torch.zeros(
+                    n_consensus_values, device=optimizer.device
                 )
 
-                # Index into interpolated data
-                X_train_interp = X_interp_picks_gpu[train_t]
-                X_good = X_train_interp[good_idx_t]
-                mean_gpu = X_good.mean(dim=0)  # (n_channels, n_times)
+                for idx, this_consensus in enumerate(consensus):
+                    if this_consensus * n_channels <= n_interp:
+                        scores_gpu[idx] = float("-inf")
+                        continue
 
-                # score = -sqrt(mean((median_X - mean_)^2))
-                # GPU-accelerated scoring (variance test showed float32 is acceptable)
-                sq_diff = (median_X - mean_gpu) ** 2
-                scores_gpu[idx] = -sq_diff.mean().sqrt()
+                    local_reject.consensus_[ch_type] = this_consensus
+                    bad_epochs = local_reject._get_bad_epochs(
+                        bad_sensor_counts[train], picks=picks_, ch_type=ch_type
+                    )
 
-            # SINGLE sync per fold
-            scores_np = scores_gpu.cpu().numpy()
-            for idx in range(n_consensus_values):
-                if scores_np[idx] == float("-inf"):
-                    loss[idx, jdx, fold] = np.inf
-                else:
-                    loss[idx, jdx, fold] = -scores_np[idx]
+                    good_epochs_idx = np.nonzero(np.invert(bad_epochs))[0]
+
+                    if len(good_epochs_idx) == 0:
+                        scores_gpu[idx] = float("-inf")
+                        continue
+
+                    good_idx_t = optimizer.torch.tensor(
+                        good_epochs_idx, device=optimizer.device
+                    )
+
+                    X_good = X_train_interp[good_idx_t]
+                    mean_gpu = X_good.mean(dim=0)
+
+                    sq_diff = (median_X - mean_gpu) ** 2
+                    scores_gpu[idx] = -sq_diff.mean().sqrt()
+
+                # SINGLE sync per fold
+                scores_np = scores_gpu.cpu().numpy()
+                for idx in range(n_consensus_values):
+                    if scores_np[idx] == float("-inf"):
+                        loss[idx, jdx, fold] = np.inf
+                    else:
+                        loss[idx, jdx, fold] = -scores_np[idx]
 
     optimizer.clear_cache()
 
