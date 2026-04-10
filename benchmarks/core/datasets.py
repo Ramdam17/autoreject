@@ -90,11 +90,11 @@ def load_mne_sample(config: dict) -> tuple[Any, dict]:
         )
         raw = mne.io.read_raw_fif(str(raw_fname), preload=True)
 
+    # Find events before dropping stimulus channel
+    events = mne.find_events(raw, stim_channel="STI 014", verbose=False)
+
     # Pick EEG only
     raw.pick("eeg")
-
-    # Find events
-    events = mne.find_events(raw, stim_channel="STI 014")
 
     # Create epochs
     epochs = mne.Epochs(
@@ -220,13 +220,13 @@ def load_ds000117(config: dict) -> tuple[Any, dict]:
             logger.warning("  Run %d not found, skipping", run)
             continue
 
-        raw = mne.io.read_raw_fif(str(run_fname), preload=True)
+        raw = mne.io.read_raw_fif(str(run_fname), preload=True, verbose=False)
 
-        # Pick EEG and remap special channels
-        eeg_picks = mne.pick_types(raw.info, meg=False, eeg=True)
-        raw.pick(eeg_picks)
+        # Find events before dropping stimulus channel
+        events = mne.find_events(raw, stim_channel="STI101",
+                                 min_duration=0.002, verbose=False)
 
-        # Rename special channels
+        # Rename special EEG channels, then pick EEG only
         rename_map = {}
         if "EEG061" in raw.ch_names:
             rename_map["EEG061"] = "EOG061"
@@ -246,15 +246,8 @@ def load_ds000117(config: dict) -> tuple[Any, dict]:
                 if ch_name in raw.ch_names:
                     raw.set_channel_types({ch_name: ch_type})
 
-        # Pick only EEG after renaming
         raw.pick("eeg")
-
-        # Filter
-        raw.filter(1.0, 40.0)
-
-        # Find events and epoch
-        events = mne.find_events(raw, stim_channel="STI101",
-                                 min_duration=0.002)
+        raw.filter(1.0, 40.0, verbose=False)
         if len(events) == 0:
             logger.warning("  No events in run %d, skipping", run)
             continue
@@ -269,7 +262,9 @@ def load_ds000117(config: dict) -> tuple[Any, dict]:
     if not all_epochs:
         raise RuntimeError("No epochs loaded from ds000117")
 
-    epochs = mne.concatenate_epochs(all_epochs)
+    # Different runs have different dev_head_t (head position); EEG-only
+    # analysis is not affected — suppress the mismatch warning.
+    epochs = mne.concatenate_epochs(all_epochs, on_mismatch="ignore")
 
     metadata = {
         "source": "ds000117",

@@ -31,7 +31,6 @@ def build_consensus_weights(bad_sensor_counts_train: np.ndarray,
                             consensus_values: np.ndarray | list[float],
                             n_channels: int,
                             picks: Any) -> tuple[np.ndarray, np.ndarray]:
-                            n_channels, picks):
     """Build weight matrix for batched consensus scoring.
 
     Parameters

@@ -184,6 +184,8 @@ def _make_autoreject(ar_kwargs: dict, backend_spec: BackendSpec) -> Any:
     Routes to the appropriate code path based on backend spec:
     - use_argmin: sets thresh_method='gpu_argmin' for on-device exact argmin
     - use_kernel: enables Metal/CUDA fused kernels + batched scoring
+    - device: explicitly forced so AutoReject doesn't fall back to CPU
+      based on dataset-size heuristics during benchmarking
     """
     from autoreject import AutoReject
 
@@ -194,6 +196,11 @@ def _make_autoreject(ar_kwargs: dict, backend_spec: BackendSpec) -> Any:
 
     if backend_spec.use_kernel:
         kwargs["use_kernel"] = True
+
+    # Force the resolved device so size-based heuristics don't override us
+    # (e.g. n_epochs < 50 threshold would fall back to CPU otherwise)
+    if backend_spec.name != "numpy_cpu":
+        kwargs["device"] = backend_spec.resolved_device
 
     return AutoReject(**kwargs)
 
