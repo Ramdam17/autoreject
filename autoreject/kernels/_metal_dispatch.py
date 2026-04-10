@@ -1,16 +1,20 @@
 """Shared Metal dispatch logic for autoreject kernels.
 
-Adapted from HyPyP's _metal_dispatch.py. Unlike HyPyP's pairwise dispatch
-(1 thread per channel pair), autoreject kernels use threadgroup-level
+Adapted from HyPyP's ``_metal_dispatch.py`` [1]_. Unlike HyPyP's pairwise
+dispatch (1 thread per channel pair), autoreject kernels use threadgroup-level
 parallelism where each threadgroup handles one (channel, threshold) pair
 and threads within the group cooperate on the time dimension.
 
 References
 ----------
-HyPyP Metal dispatch: hypyp/sync/kernels/_metal_dispatch.py
+.. [1] Ramadour, R. HyPyP GPU acceleration — Metal dispatch module.
+       hypyp/sync/kernels/_metal_dispatch.py
 """
 
+from __future__ import annotations
+
 import struct
+from typing import Any
 
 import numpy as np
 
@@ -20,7 +24,8 @@ if METAL_AVAILABLE:
     import Metal
 
 
-def make_const_buffer(device, value, fmt='I'):
+def make_const_buffer(device: Any, value: int | float,
+                      fmt: str = 'I') -> Any:
     """Create a Metal buffer containing a single constant.
 
     Parameters
@@ -42,7 +47,7 @@ def make_const_buffer(device, value, fmt='I'):
     )
 
 
-def make_buffer_from_numpy(device, arr):
+def make_buffer_from_numpy(device: Any, arr: np.ndarray) -> Any:
     """Create a Metal buffer from a numpy array.
 
     Parameters
@@ -62,7 +67,7 @@ def make_buffer_from_numpy(device, arr):
     )
 
 
-def make_output_buffer(device, n_bytes):
+def make_output_buffer(device: Any, n_bytes: int) -> Any:
     """Create an empty Metal output buffer.
 
     Parameters
@@ -81,7 +86,7 @@ def make_output_buffer(device, n_bytes):
     )
 
 
-def read_buffer_float32(buf, shape):
+def read_buffer_float32(buf: Any, shape: tuple[int, ...]) -> np.ndarray:
     """Read a Metal buffer back as a numpy float32 array.
 
     Parameters
@@ -100,8 +105,10 @@ def read_buffer_float32(buf, shape):
     return np.frombuffer(membuf, dtype=np.float32).copy().reshape(shape)
 
 
-def dispatch_threadgroups(device, pipeline, buffers, grid_size,
-                          threadgroup_size=256):
+def dispatch_threadgroups(device: Any, pipeline: Any,
+                          buffers: list[tuple[Any, int]],
+                          grid_size: tuple[int, int, int],
+                          threadgroup_size: int = 256) -> None:
     """Dispatch a Metal compute kernel with threadgroup-level parallelism.
 
     Unlike HyPyP's flat thread dispatch, this dispatches threadgroups where
@@ -137,7 +144,8 @@ def dispatch_threadgroups(device, pipeline, buffers, grid_size,
     cmd_buffer.waitUntilCompleted()
 
 
-def compile_metal_function(source, function_name):
+def compile_metal_function(source: str,
+                           function_name: str) -> tuple[Any, Any]:
     """Compile a Metal shader source and return (device, pipeline).
 
     Parameters

@@ -1,24 +1,33 @@
 """Accuracy analysis: 3-tier verification of benchmark results.
 
 Tier 1 — Numerical identity (same precision):
-  CUDA float64 vs CPU float64 → bitwise match expected
-  MPS float32 vs CPU float64 → rtol=1e-4
+  CUDA float64 vs CPU float64 → bitwise match expected.
+  MPS float32 vs CPU float64 → ``rtol=1e-4``.
 
 Tier 2 — Algorithmic equivalence (argmin vs bayes_opt):
-  Thresholds differ, but loss[argmin_thresh] <= loss[bayesopt_thresh]
+  Thresholds differ, but ``loss[argmin_thresh] <= loss[bayesopt_thresh]``.
 
 Tier 3 — Kernel equivalence (Metal/CUDA vs PyTorch):
-  np.allclose(kernel_losses, pytorch_losses, rtol=1e-5 / 1e-12)
+  ``np.allclose(kernel_losses, pytorch_losses, rtol=1e-5 / 1e-12)``.
+
+References
+----------
+.. [1] Jas, M., Engemann, D. A., Bekhti, Y., Raimondo, F., & Gramfort, A.
+       (2017). Autoreject: Automated artifact rejection for MEG and EEG data.
+       NeuroImage, 159, 417-429. doi:10.1016/j.neuroimage.2017.06.030
 """
 
+from __future__ import annotations
+
 import logging
+from typing import Any
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
-def compare_thresholds(ref_result, test_result):
+def compare_thresholds(ref_result: dict, test_result: dict) -> dict:
     """Compare per-channel thresholds between two results.
 
     Parameters
@@ -66,7 +75,7 @@ def compare_thresholds(ref_result, test_result):
     }
 
 
-def compare_hyperparams(ref_result, test_result):
+def compare_hyperparams(ref_result: dict, test_result: dict) -> dict:
     """Compare consensus and n_interpolate.
 
     Returns
@@ -89,7 +98,8 @@ def compare_hyperparams(ref_result, test_result):
     }
 
 
-def full_accuracy_report(results_by_backend, reference_backend="numpy_cpu"):
+def full_accuracy_report(results_by_backend: dict[str, dict],
+                         reference_backend: str = "numpy_cpu") -> list[dict]:
     """Generate accuracy comparison table for all backends vs reference.
 
     Parameters

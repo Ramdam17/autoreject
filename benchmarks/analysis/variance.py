@@ -3,11 +3,20 @@
 Compares threshold stability across multiple random seeds for each backend.
 Key question: does argmin have lower/equal/higher variance than bayes_opt?
 
-Metrics:
+Metrics
+-------
 - Per-channel coefficient of variation (CV = std/mean)
 - Distribution comparison: bayes_opt vs argmin
 - Determinism test: same seed N times → identical results for argmin
+
+References
+----------
+.. [1] Jas, M., Engemann, D. A., Bekhti, Y., Raimondo, F., & Gramfort, A.
+       (2017). Autoreject: Automated artifact rejection for MEG and EEG data.
+       NeuroImage, 159, 417-429. doi:10.1016/j.neuroimage.2017.06.030
 """
+
+from __future__ import annotations
 
 import logging
 from collections import defaultdict
@@ -17,7 +26,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def compute_variance_analysis(results_list):
+def compute_variance_analysis(results_list: list[dict]) -> dict:
     """Compute cross-seed variance from multiple results for one config.
 
     Parameters
@@ -82,8 +91,9 @@ def compute_variance_analysis(results_list):
     return analysis
 
 
-def compare_variance_envelopes(analysis, ref_backend="torch_gpu",
-                               test_backend="torch_gpu_argmin"):
+def compare_variance_envelopes(analysis: dict,
+                               ref_backend: str = "torch_gpu",
+                               test_backend: str = "torch_gpu_argmin") -> dict:
     """Compare variance envelopes between two backends.
 
     Parameters
@@ -150,7 +160,8 @@ def compare_variance_envelopes(analysis, ref_backend="torch_gpu",
     }
 
 
-def check_determinism(results_list, backend_name="torch_gpu_argmin"):
+def check_determinism(results_list: list[dict],
+                      backend_name: str = "torch_gpu_argmin") -> tuple[bool, str]:
     """Check if a backend produces identical results for the same seed.
 
     Parameters

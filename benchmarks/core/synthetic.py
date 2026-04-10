@@ -4,16 +4,22 @@ Generates realistic EEG-like data with proper channel montages,
 configurable artifact rates, and reproducible random states.
 
 Unifies the generators from:
-- autoreject/benchmarks/profile_pipeline.py
-- old benchmarks/run_single.py (commit 7409d3c)
+- ``autoreject/benchmarks/profile_pipeline.py``
+- old ``benchmarks/run_single.py`` (commit 7409d3c)
 """
+
+from __future__ import annotations
+
+from typing import Any
 
 import numpy as np
 
 
-def generate_epochs(n_channels, sfreq=500, epoch_duration=2.0,
-                    recording_duration_min=10, artifact_pct=0.3,
-                    random_state=42):
+def generate_epochs(n_channels: int, sfreq: float = 500,
+                    epoch_duration: float = 2.0,
+                    recording_duration_min: float = 10,
+                    artifact_pct: float = 0.3,
+                    random_state: int = 42) -> tuple[Any, dict]:
     """Generate synthetic MNE Epochs for benchmarking.
 
     Creates EEG-like data with a proper standard montage, realistic

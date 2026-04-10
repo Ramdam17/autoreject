@@ -7,17 +7,30 @@ scores in a single GPU operation per fold using a weight matrix approach.
 The key insight: for each consensus value c, the "good epochs" are a subset
 of training epochs. We build a weight matrix W of shape (n_consensus, n_train)
 where W[c, e] = 1/n_good_c if epoch e is good for consensus c, else 0.
-Then: mean_c = W[c, :] @ X_train  (for all c at once via matmul)
+Then: ``mean_c = W[c, :] @ X_train`` (for all c at once via matmul).
 
 This reduces ~11 separate (index + mean) GPU operations to 1 matmul.
+
+References
+----------
+.. [1] Jas, M., Engemann, D. A., Bekhti, Y., Raimondo, F., & Gramfort, A.
+       (2017). Autoreject: Automated artifact rejection for MEG and EEG data.
+       NeuroImage, 159, 417-429. doi:10.1016/j.neuroimage.2017.06.030
 """
 
 # Author: Rémy Ramadour <remy.ramadour.labs@gmail.com>
 
+from __future__ import annotations
+
+from typing import Any
+
 import numpy as np
 
 
-def build_consensus_weights(bad_sensor_counts_train, consensus_values,
+def build_consensus_weights(bad_sensor_counts_train: np.ndarray,
+                            consensus_values: np.ndarray | list[float],
+                            n_channels: int,
+                            picks: Any) -> tuple[np.ndarray, np.ndarray]:
                             n_channels, picks):
     """Build weight matrix for batched consensus scoring.
 
@@ -70,8 +83,9 @@ def build_consensus_weights(bad_sensor_counts_train, consensus_values,
     return weights, valid_mask
 
 
-def batched_consensus_score(X_train_interp_gpu, median_gpu, weights_gpu,
-                            valid_mask, torch_module):
+def batched_consensus_score(X_train_interp_gpu: Any, median_gpu: Any,
+                            weights_gpu: Any, valid_mask: np.ndarray,
+                            torch_module: Any) -> np.ndarray:
     """Compute RMSE scores for all consensus values in one GPU operation.
 
     Parameters
@@ -116,7 +130,7 @@ def batched_consensus_score(X_train_interp_gpu, median_gpu, weights_gpu,
     return scores.cpu().numpy()
 
 
-def fast_median(tensor, dim, torch_module):
+def fast_median(tensor: Any, dim: int, torch_module: Any) -> Any:
     """Compute median using torch.topk instead of full sort.
 
     For small sizes along the median dimension (typical: 40-80 test epochs),

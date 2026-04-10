@@ -1,22 +1,32 @@
 """Single-config benchmark executor.
 
 Runs one benchmark configuration against one backend, measuring:
-- Total wall time for AutoReject.fit()
+- Total wall time for ``AutoReject.fit()``
 - Peak GPU memory
 - Output extraction (thresholds, consensus, n_interpolate, loss)
 
 The runner sets the appropriate environment variables and constructs
 AutoReject with the right parameters for each backend.
+
+References
+----------
+.. [1] Jas, M., Engemann, D. A., Bekhti, Y., Raimondo, F., & Gramfort, A.
+       (2017). Autoreject: Automated artifact rejection for MEG and EEG data.
+       NeuroImage, 159, 417-429. doi:10.1016/j.neuroimage.2017.06.030
 """
+
+from __future__ import annotations
 
 import logging
 import os
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
 from .hardware import reset_gpu_memory, get_peak_gpu_mb, sync_device
+from .registry import BackendSpec
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +58,7 @@ class BenchmarkResult:
     n_times: int = 0
     error: str = ""
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-compatible dict."""
         return {
             "config_name": self.config_name,
@@ -69,8 +79,9 @@ class BenchmarkResult:
         }
 
 
-def run_single(config, backend_spec, epochs, seed=42, warmup_runs=1,
-               timing_runs=3):
+def run_single(config: dict, backend_spec: BackendSpec, epochs: Any,
+               seed: int = 42, warmup_runs: int = 1,
+               timing_runs: int = 3) -> BenchmarkResult:
     """Run a single benchmark: one config × one backend.
 
     Parameters
@@ -167,7 +178,7 @@ def run_single(config, backend_spec, epochs, seed=42, warmup_runs=1,
     return result
 
 
-def _make_autoreject(ar_kwargs, backend_spec):
+def _make_autoreject(ar_kwargs: dict, backend_spec: BackendSpec) -> Any:
     """Create an AutoReject instance configured for the given backend.
 
     Routes to the appropriate code path based on backend spec:
@@ -187,7 +198,7 @@ def _make_autoreject(ar_kwargs, backend_spec):
     return AutoReject(**kwargs)
 
 
-def _resolve_presets(config):
+def _resolve_presets(config: dict) -> dict[str, list]:
     """Resolve preset names (light/medium/aggressive) to actual values."""
     # Default presets
     presets_map = {
@@ -217,7 +228,7 @@ def _resolve_presets(config):
     return result
 
 
-def _clear_caches():
+def _clear_caches() -> None:
     """Clear backend and interpolation caches between runs."""
     try:
         from autoreject.backends import get_backend

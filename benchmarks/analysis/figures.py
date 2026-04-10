@@ -2,12 +2,22 @@
 
 Produces matplotlib figures matching the Legacy benchmark style
 (speedup heatmaps, scaling curves, variance distributions, etc.).
+
+References
+----------
+.. [1] Jas, M., Engemann, D. A., Bekhti, Y., Raimondo, F., & Gramfort, A.
+       (2017). Autoreject: Automated artifact rejection for MEG and EEG data.
+       NeuroImage, 159, 417-429. doi:10.1016/j.neuroimage.2017.06.030
 """
+
+from __future__ import annotations
 
 import logging
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
+import matplotlib
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -30,7 +40,8 @@ BACKEND_LABELS = {
 }
 
 
-def save_figure(fig, output_dir, name, fmt="png", dpi=150):
+def save_figure(fig: Any, output_dir: str | Path, name: str,
+                fmt: str = "png", dpi: int = 150) -> str:
     """Save a figure to the output directory."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -40,8 +51,9 @@ def save_figure(fig, output_dir, name, fmt="png", dpi=150):
     return str(path)
 
 
-def generate_all_figures(grouped_results, output_dir, scaling_data=None,
-                         variance_data=None):
+def generate_all_figures(grouped_results: dict, output_dir: str | Path,
+                         scaling_data: dict | None = None,
+                         variance_data: dict | None = None) -> dict[str, str]:
     """Generate all benchmark figures.
 
     Parameters
@@ -112,7 +124,7 @@ def generate_all_figures(grouped_results, output_dir, scaling_data=None,
     return paths
 
 
-def plot_timing_comparison(grouped_results):
+def plot_timing_comparison(grouped_results: dict) -> Any | None:
     """Grouped bar chart: wall time per config × backend."""
     import matplotlib.pyplot as plt
 
@@ -165,8 +177,8 @@ def plot_timing_comparison(grouped_results):
     return fig
 
 
-def plot_speedup_vs_x(scaling_data, xlabel="Channels",
-                      title="Speedup vs Data Size"):
+def plot_speedup_vs_x(scaling_data: dict, xlabel: str = "Channels",
+                      title: str = "Speedup vs Data Size") -> Any | None:
     """Line chart: speedup vs x for each backend."""
     import matplotlib.pyplot as plt
 
@@ -194,7 +206,7 @@ def plot_speedup_vs_x(scaling_data, xlabel="Channels",
     return fig
 
 
-def plot_memory_usage(grouped_results):
+def plot_memory_usage(grouped_results: dict) -> Any | None:
     """Bar chart: peak GPU memory per config × backend."""
     import matplotlib.pyplot as plt
 
@@ -239,7 +251,8 @@ def plot_memory_usage(grouped_results):
     return fig
 
 
-def plot_accuracy_scatter(grouped_results, ref_backend="numpy_cpu"):
+def plot_accuracy_scatter(grouped_results: dict,
+                          ref_backend: str = "numpy_cpu") -> Any | None:
     """Scatter plot: CPU threshold vs GPU threshold per channel."""
     import matplotlib.pyplot as plt
 
@@ -292,7 +305,7 @@ def plot_accuracy_scatter(grouped_results, ref_backend="numpy_cpu"):
     return fig
 
 
-def plot_variance_envelope(variance_data):
+def plot_variance_envelope(variance_data: dict) -> Any | None:
     """Box/violin plot: per-channel CV for each backend."""
     import matplotlib.pyplot as plt
 
@@ -326,7 +339,8 @@ def plot_variance_envelope(variance_data):
     return fig
 
 
-def plot_validation_summary(grouped_results, ref_backend="numpy_cpu"):
+def plot_validation_summary(grouped_results: dict,
+                            ref_backend: str = "numpy_cpu") -> Any | None:
     """Summary figure: horizontal bar chart of parameter differences."""
     import matplotlib.pyplot as plt
     from .accuracy import compare_thresholds, compare_hyperparams

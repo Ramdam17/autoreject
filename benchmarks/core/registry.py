@@ -1,8 +1,10 @@
 """Backend registry: discover, validate, and filter available backends.
 
 Probes the current machine to determine which backends can run,
-based on config.yaml backend definitions and installed dependencies.
+based on ``config.yaml`` backend definitions and installed dependencies.
 """
+
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
@@ -42,7 +44,7 @@ class BackendSpec:
         return self.precision
 
 
-def probe_backends(backend_configs):
+def probe_backends(backend_configs: dict) -> list[BackendSpec]:
     """Probe which backends are available on this machine.
 
     Parameters
@@ -94,7 +96,8 @@ def probe_backends(backend_configs):
     return backends
 
 
-def filter_backends(backends, requested):
+def filter_backends(backends: list[BackendSpec],
+                    requested: list[str] | str | None) -> list[BackendSpec]:
     """Filter backends by a requested list.
 
     Parameters
@@ -126,7 +129,7 @@ def filter_backends(backends, requested):
     return result
 
 
-def _check_dependency(dep):
+def _check_dependency(dep: str) -> bool:
     """Check if a Python dependency is importable."""
     try:
         __import__(dep)

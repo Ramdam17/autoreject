@@ -3,12 +3,14 @@
 Collects hardware details for reproducible benchmark reports.
 """
 
+from __future__ import annotations
+
 import os
 import platform
 import subprocess
 
 
-def get_machine_info():
+def get_machine_info() -> dict[str, str | float | bool]:
     """Collect machine information for benchmark reports.
 
     Returns
@@ -98,7 +100,7 @@ def get_machine_info():
     return info
 
 
-def _get_apple_chip_name():
+def _get_apple_chip_name() -> str:
     """Get Apple Silicon chip name on macOS."""
     try:
         result = subprocess.run(
@@ -112,7 +114,7 @@ def _get_apple_chip_name():
     return "Apple Silicon"
 
 
-def detect_device():
+def detect_device() -> str:
     """Auto-detect best available GPU device.
 
     Returns
@@ -131,7 +133,7 @@ def detect_device():
     return "cpu"
 
 
-def reset_gpu_memory(device):
+def reset_gpu_memory(device: str) -> None:
     """Reset GPU memory tracking counters."""
     try:
         import torch
@@ -144,7 +146,7 @@ def reset_gpu_memory(device):
         pass
 
 
-def get_peak_gpu_mb(device):
+def get_peak_gpu_mb(device: str) -> float:
     """Get peak GPU memory usage in MB.
 
     Returns
@@ -163,7 +165,7 @@ def get_peak_gpu_mb(device):
     return float("nan")
 
 
-def sync_device(device):
+def sync_device(device: str) -> None:
     """Synchronize GPU device."""
     try:
         import torch

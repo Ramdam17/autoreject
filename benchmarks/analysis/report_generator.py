@@ -2,11 +2,18 @@
 
 Assembles timing tables, accuracy comparisons, and optimization summary
 into a structured Markdown document.
+
+References
+----------
+.. [1] Jas, M., Engemann, D. A., Bekhti, Y., Raimondo, F., & Gramfort, A.
+       (2017). Autoreject: Automated artifact rejection for MEG and EEG data.
+       NeuroImage, 159, 417-429. doi:10.1016/j.neuroimage.2017.06.030
 """
+
+from __future__ import annotations
 
 import json
 import logging
-import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -18,7 +25,7 @@ from .figures import generate_all_figures
 logger = logging.getLogger(__name__)
 
 
-def load_results(results_dir):
+def load_results(results_dir: str | Path) -> list[dict]:
     """Load all JSON result files from a directory.
 
     Returns
@@ -38,7 +45,7 @@ def load_results(results_dir):
     return results
 
 
-def group_by_config(results):
+def group_by_config(results: list[dict]) -> dict[str, dict]:
     """Group results by config_name → {backend_name: result}.
 
     Returns
@@ -56,7 +63,9 @@ def group_by_config(results):
     return grouped
 
 
-def generate_report(results_dir, machine_info=None, output_path=None):
+def generate_report(results_dir: str | Path,
+                    machine_info: dict | None = None,
+                    output_path: str | Path | None = None) -> str:
     """Generate a complete Markdown benchmark report.
 
     Parameters
@@ -135,7 +144,7 @@ def generate_report(results_dir, machine_info=None, output_path=None):
     return report
 
 
-def _config_section(config_name, backends):
+def _config_section(config_name: str, backends: dict) -> list[str]:
     """Generate report section for one config."""
     lines = []
     lines.append(f"## {config_name}")
@@ -203,7 +212,7 @@ def _config_section(config_name, backends):
     return lines
 
 
-def _optimization_summary():
+def _optimization_summary() -> list[str]:
     """Static optimization summary section."""
     lines = []
     lines.append("## Optimizations Explored")

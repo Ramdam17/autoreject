@@ -1,30 +1,33 @@
 """Real dataset loading for benchmarks.
 
 Handles download, caching, and epoching of 3 reference datasets:
-- MNE Sample (auditory-visual, ~60 EEG channels)
-- ds002778 (Parkinson's resting-state, 32ch Biosemi)
-- ds000117 (Face recognition, ~60 EEG channels)
 
-Each loader returns (epochs, metadata) for consistent interface.
+- **MNE Sample** (auditory-visual, ~60 EEG channels)
+- **ds002778** (Parkinson's resting-state, 32ch Biosemi) [1]_
+- **ds000117** (Face recognition, ~60 EEG channels) [2]_
+
+Each loader returns ``(epochs, metadata)`` for consistent interface.
 
 References
 ----------
-- MNE Sample: mne.datasets.sample / mne.datasets.testing
-- ds002778: openneuro.download(dataset='ds002778')
-  Used in examples/plot_autoreject_workflow.py
-- ds000117: openneuro.download(dataset='ds000117')
-  Used in examples/plot_visualize_bad_epochs.py
+.. [1] Rockhill, A. P. et al. (2020). OpenNeuro ds002778: EEG dataset of
+       Parkinson's disease patients during resting state.
+.. [2] Wakeman, D. G., & Henson, R. N. (2015). A multi-subject, multi-modal
+       human neuroimaging dataset. Scientific Data, 2, 150001.
 """
+
+from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
-def load_dataset(config):
+def load_dataset(config: dict) -> tuple[Any, dict]:
     """Load a dataset based on config source field.
 
     Parameters
@@ -59,7 +62,7 @@ def load_dataset(config):
         raise ValueError(f"Unknown data source: {source}")
 
 
-def load_mne_sample(config):
+def load_mne_sample(config: dict) -> tuple[Any, dict]:
     """Load MNE sample dataset, EEG channels only.
 
     Tries the testing (truncated) dataset first, falls back to full sample.
@@ -114,7 +117,7 @@ def load_mne_sample(config):
     return epochs, metadata
 
 
-def load_ds002778(config):
+def load_ds002778(config: dict) -> tuple[Any, dict]:
     """Load OpenNeuro ds002778: Parkinson's resting-state EEG.
 
     32-channel Biosemi, fixed-length 3s epochs.
@@ -173,7 +176,7 @@ def load_ds002778(config):
     return epochs, metadata
 
 
-def load_ds000117(config):
+def load_ds000117(config: dict) -> tuple[Any, dict]:
     """Load OpenNeuro ds000117: Face recognition MEG/EEG.
 
     Uses EEG channels from multiple runs, concatenated.

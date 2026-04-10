@@ -1,10 +1,13 @@
 """Scaling law extraction from benchmark results.
 
 Fits speedup vs data size (channels, epochs) to identify:
+
 - How GPU advantage scales with problem size
 - Crossover point: where GPU breaks even with CPU
 - Which phase dominates at each scale
 """
+
+from __future__ import annotations
 
 import logging
 
@@ -13,8 +16,9 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def extract_scaling_data(results_list, group_by="n_channels",
-                         ref_backend="numpy_cpu"):
+def extract_scaling_data(results_list: list[dict],
+                         group_by: str = "n_channels",
+                         ref_backend: str = "numpy_cpu") -> dict:
     """Extract scaling curves from benchmark results.
 
     Parameters
@@ -84,7 +88,8 @@ def extract_scaling_data(results_list, group_by="n_channels",
     return scaling
 
 
-def fit_scaling_law(x, y, model="power"):
+def fit_scaling_law(x: np.ndarray, y: np.ndarray,
+                    model: str = "power") -> dict:
     """Fit a scaling law to (x, y) data.
 
     Parameters
@@ -153,8 +158,9 @@ def fit_scaling_law(x, y, model="power"):
     return {"model": model, "r_squared": float("nan")}
 
 
-def find_crossover_point(scaling_data, cpu_backend="numpy_cpu",
-                         gpu_backend="torch_gpu"):
+def find_crossover_point(scaling_data: dict,
+                         cpu_backend: str = "numpy_cpu",
+                         gpu_backend: str = "torch_gpu") -> float | None:
     """Find where GPU breaks even with CPU.
 
     Returns
