@@ -186,8 +186,11 @@ class GPUThresholdOptimizer:
             return None
 
         # Pre-compute medians and run kernel per fold
+        # Use float64 so CUDA kernel output (float64) can be assigned directly.
+        # Metal (float32) is safely promoted.
         fold_losses = self.torch.zeros(
-            (n_folds, n_channels, n_thresh), device=self.device
+            (n_folds, n_channels, n_thresh), device=self.device,
+            dtype=self.torch.float64
         )
 
         for fold_idx, (train_idx, test_idx) in enumerate(cv_splits):
@@ -1564,7 +1567,8 @@ def run_local_reject_cv_gpu_batch(
                         weights[idx, :] = 0.0
 
                 weights_gpu = optimizer.torch.tensor(
-                    weights, device=optimizer.device
+                    weights, device=optimizer.device,
+                    dtype=X_train_interp.dtype
                 )
                 scores_np = batched_consensus_score(
                     X_train_interp, median_X, weights_gpu,

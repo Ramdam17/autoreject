@@ -254,7 +254,7 @@ suites:
       artifact_pct: 0.3
       n_seeds: 15
       seed_start: 42
-      backends: [numpy_cpu, torch_gpu, torch_gpu_argmin]
+      backends: [numpy_cpu, torch_gpu, torch_gpu_argmin, cuda_kernel]
 
     - name: var_64ch
       source: synthetic
@@ -268,7 +268,7 @@ suites:
       artifact_pct: 0.3
       n_seeds: 15
       seed_start: 42
-      backends: [numpy_cpu, torch_gpu, torch_gpu_argmin]
+      backends: [numpy_cpu, torch_gpu, torch_gpu_argmin, cuda_kernel]
 
     - name: var_mne_sample
       source: mne_sample
@@ -277,4 +277,4 @@ suites:
       consensus: standard
       n_seeds: 15
       seed_start: 42
-      backends: [numpy_cpu, torch_gpu, torch_gpu_argmin]
+      backends: [numpy_cpu, torch_gpu, torch_gpu_argmin, cuda_kernel]

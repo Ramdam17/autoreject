@@ -169,7 +169,9 @@ def run_single(config: dict, backend_spec: BackendSpec, epochs: Any,
         result.n_interpolate = dict(ar.n_interpolate_)
 
     except Exception as e:
+        import traceback
         logger.error("  %s/%s failed: %s", config_name, backend_name, e)
+        logger.error("  Traceback:\n%s", traceback.format_exc())
         result.error = str(e)
 
     finally:

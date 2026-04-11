@@ -118,7 +118,7 @@ extern "C" __global__ void thresh_cv_fused(
     }
 
     if (n_good == 0) {
-        if (tid == 0) rmse_out[ch * n_thresh + th] = INFINITY;
+        if (tid == 0) rmse_out[ch * n_thresh + th] = 1.0 / 0.0;
         return;
     }
 

@@ -122,7 +122,7 @@ def batched_consensus_score(X_train_interp_gpu: Any, median_gpu: Any,
 
     # Transfer back and apply validity mask
     scores = torch_module.full((n_consensus,), float('-inf'),
-                               device=rmse.device)
+                               device=rmse.device, dtype=rmse.dtype)
     valid_t = torch_module.tensor(valid_mask, device=rmse.device)
     scores[valid_t] = -rmse[valid_t]
 
