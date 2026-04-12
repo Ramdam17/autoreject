@@ -23,7 +23,6 @@ try:
         gpu_make_interpolation_matrix,
         gpu_do_interp_dots,
         gpu_interpolate_bads_eeg,
-        gpu_clean_by_interp,
     )
 except ImportError:
     pass  # torch not installed

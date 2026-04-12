@@ -44,11 +44,11 @@ venv/
 __pycache__/
 junit-results.xml
 
-# Benchmarks outputs (keep scripts, ignore results)
-benchmarks/results/
-benchmarks/logs/
-benchmarks/figures/
-benchmarks/orchestrator_log_*.json
+# Benchmark infrastructure (fork-local, not part of upstream PR)
+Benchmark/
 
-# Claude Code user-specific settings
-.claude/settings.local.json
+# Claude Code settings
+.claude/
+
+# Package lock
+uv.lock
