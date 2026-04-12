@@ -15,7 +15,7 @@ from joblib import Parallel, delayed
 from h5io import read_hdf5, write_hdf5
 
 import mne
-from mne import pick_types
+from mne import pick_types, EpochsArray
 from mne.viz import plot_epochs as plot_mne_epochs
 
 from sklearn.base import BaseEstimator
@@ -27,6 +27,7 @@ from .utils import (_clean_by_interp, interpolate_bads, _get_epochs_type,
                     _pbar, _handle_picks, _check_data, _compute_dots,
                     _get_picks_by_type, _pprint, _GDKW)
 from .bayesopt import expected_improvement, bayes_opt
+from .backends import get_backend
 
 
 _INIT_PARAMS = ('consensus', 'n_interpolate', 'picks',
@@ -92,7 +93,8 @@ def validation_curve(epochs, y=None, param_name="thresh", param_range=None,
     n_epochs, n_channels, n_times = X.shape
 
     if param_range is None:
-        ptps = np.ptp(X, axis=2)
+        backend = get_backend()
+        ptps = backend.ptp(X, axis=2)
         param_range = np.linspace(ptps.min(), ptps.max(), 15)
 
     estimator.n_channels = n_channels
@@ -151,13 +153,18 @@ class BaseAutoReject(BaseEstimator):
     """Base class for rejection."""
 
     def score(self, X, y=None):
-        """Score it."""
+        """Score it.
+
+        Uses GPU-accelerated median computation when available.
+        """
         if hasattr(self, 'n_channels'):
             X = X.reshape(-1, self.n_channels, self.n_times)
         if np.any(np.isnan(self.mean_)):
             return -np.inf
         else:
-            return -np.sqrt(np.mean((np.median(X, axis=0) - self.mean_) ** 2))
+            backend = get_backend()
+            median_X = backend.median(X, axis=0)
+            return -np.sqrt(np.mean((median_X - self.mean_) ** 2))
 
 
 class _GlobalAutoReject(BaseAutoReject):
@@ -180,13 +187,17 @@ class _GlobalAutoReject(BaseAutoReject):
         self.n_times = n_times
 
     def fit(self, X, y=None):
-        """Fit it."""
+        """Fit it.
+
+        Uses GPU-accelerated ptp computation when available.
+        """
         if self.n_channels is None or self.n_times is None:
             raise ValueError('Cannot fit without knowing n_channels'
                              ' and n_times')
         X = X.reshape(-1, self.n_channels, self.n_times)
-        deltas = np.array([np.ptp(d, axis=1) for d in X])
-        epoch_deltas = deltas.max(axis=1)
+        backend = get_backend()
+        deltas = backend.ptp(X, axis=-1)  # (n_epochs, n_channels)
+        epoch_deltas = np.max(deltas, axis=1)  # max across channels
         keep = epoch_deltas <= self.thresh
         self.mean_ = _slicemean(X, keep, axis=0)
         return self
@@ -264,8 +275,9 @@ def get_rejection_threshold(epochs, decim=1, random_state=None,
 
         X = epochs.get_data(picks, **_GDKW)
         n_epochs, n_channels, n_times = X.shape
-        deltas = np.array([np.ptp(d, axis=1) for d in X])
-        all_threshes = np.sort(deltas.max(axis=1))
+        backend = get_backend()
+        deltas = backend.ptp(X, axis=-1)  # (n_epochs, n_channels)
+        all_threshes = np.sort(np.max(deltas, axis=1))
 
         if verbose:
             print('Estimating rejection dictionary for %s' % ch_type)
@@ -314,14 +326,16 @@ class _ChannelAutoReject(BaseAutoReject):
             Redundant. Necessary to be compatible with sklearn
             API.
         """
-        deltas = np.ptp(X, axis=1)
+        backend = get_backend()
+        deltas = backend.ptp(X, axis=1)
         self.deltas_ = deltas
         keep = deltas <= self.thresh
         # XXX: actually go over all the folds before setting the min
         # in skopt. Otherwise, may confuse skopt.
-        if self.thresh < np.min(np.ptp(X, axis=1)):
+        min_ptp = np.min(backend.ptp(X, axis=1))
+        if self.thresh < min_ptp:
             assert np.sum(keep) == 0
-            keep = deltas <= np.min(np.ptp(X, axis=1))
+            keep = deltas <= min_ptp
         self.mean_ = _slicemean(X, keep, axis=0)
         return self
 
@@ -354,7 +368,8 @@ def _compute_thresh(this_data, method='bayesian_optimization',
     autoreject with scipy version 0.16 or greater.
     """
     est = _ChannelAutoReject()
-    all_threshes = np.sort(np.ptp(this_data, axis=1))
+    backend = get_backend()
+    all_threshes = np.sort(backend.ptp(this_data, axis=1))
 
     if method == 'random_search':
         param_dist = dict(thresh=uniform(all_threshes[0],
@@ -533,7 +548,7 @@ class _AutoReject(BaseAutoReject):
 
     def __init__(self, n_interpolate=0, consensus=0.1, thresh_func=None,
                  picks=None, thresh_method='bayesian_optimization', dots=None,
-                 verbose=True):
+                 verbose=True, device=None):
         """Init it."""
         if thresh_func is None:
             thresh_func = _compute_thresholds
@@ -546,6 +561,7 @@ class _AutoReject(BaseAutoReject):
         self.picks = picks
         self.verbose = verbose
         self.dots = dots
+        self.device = device
 
     def __repr__(self):
         """repr."""
@@ -556,7 +572,7 @@ class _AutoReject(BaseAutoReject):
         return '%s(%s)' % (class_name, _pprint(params,
                                                offset=len(class_name),),)
 
-    def _vote_bad_epochs(self, epochs, picks):
+    def _vote_bad_epochs(self, epochs, picks, backend=None):
         """Each channel votes for an epoch as good or bad.
 
         Parameters
@@ -565,15 +581,32 @@ class _AutoReject(BaseAutoReject):
             The epochs object for which bad epochs must be found.
         picks : array-like
             The indices of the channels to consider.
+        backend : Backend | None
+            Compute backend to use for peak-to-peak computation.
+            If None, auto-detect the best available backend.
         """
         labels = np.zeros((len(epochs), len(epochs.ch_names)))
         labels.fill(np.nan)
         bad_sensor_counts = np.zeros((len(epochs),))
 
+        if backend is None:
+            backend = get_backend()
+        data = epochs.get_data(picks, **_GDKW)
         this_ch_names = [epochs.ch_names[p] for p in picks]
-        deltas = np.ptp(epochs.get_data(picks, **_GDKW), axis=-1).T
+        deltas = backend.ptp(data, axis=-1).T
+
+        # MPS (Apple Silicon) only supports float32, which can cause
+        # edge-case flips when comparing to float64 thresholds.
+        # Round thresholds UP to next float32 to ensure consistency.
+        use_f32_thresh = (
+            backend.name == 'torch' and
+            hasattr(backend, 'device') and
+            backend.device == 'mps')
+
         threshes = [self.threshes_[ch_name] for ch_name in this_ch_names]
         for ch_idx, (delta, thresh) in enumerate(zip(deltas, threshes)):
+            if use_f32_thresh:
+                thresh = np.nextafter(np.float32(thresh), np.float32(np.inf))
             bad_epochs_idx = np.where(delta > thresh)[0]
             labels[:, picks[ch_idx]] = 0
             labels[bad_epochs_idx, picks[ch_idx]] = 1
@@ -583,15 +616,31 @@ class _AutoReject(BaseAutoReject):
 
     def _get_epochs_interpolation(self, epochs, labels,
                                   picks, n_interpolate,
-                                  verbose=True):
-        """Interpolate the bad epochs."""
+                                  verbose=True, data=None):
+        """Interpolate the bad epochs.
+
+        Parameters
+        ----------
+        data : ndarray or None
+            Pre-extracted data array, shape (n_epochs, n_channels, n_times).
+            If provided, avoids expensive repeated epochs[idx].get_data().
+        """
         # 1: bad segment, # 2: interpolated
         assert labels.shape[0] == len(epochs)
         assert labels.shape[1] == len(epochs.ch_names)
         labels = labels.copy()
         non_picks = np.setdiff1d(range(epochs.info['nchan']), picks)
+
+        # Pre-compute data if needed for PTP computation
+        data_local = data
+        if data_local is None:
+            n_bads_per_epoch = np.sum(labels[:, picks] == 1, axis=1)
+            needs_ptp = np.any(n_bads_per_epoch > n_interpolate)
+            if needs_ptp:
+                data_local = epochs.get_data(**_GDKW)
+
         for epoch_idx in range(len(epochs)):
-            n_bads = labels[epoch_idx, picks].sum()
+            n_bads = (labels[epoch_idx, picks] == 1).sum()
             if n_bads == 0:
                 continue
             else:
@@ -599,8 +648,12 @@ class _AutoReject(BaseAutoReject):
                     interp_chs_mask = labels[epoch_idx] == 1
                 else:
                     # get peak-to-peak for channels in that epoch
-                    data = epochs[epoch_idx].get_data(**_GDKW)[0]
-                    peaks = np.ptp(data, axis=-1)
+                    if data_local is not None:
+                        epoch_data = data_local[epoch_idx]
+                    else:
+                        epoch_data = epochs[epoch_idx].get_data(**_GDKW)[0]
+                    backend = get_backend()
+                    peaks = backend.ptp(epoch_data, axis=-1)
                     peaks[non_picks] = -np.inf
                     # find channels which are bad by rejection threshold
                     interp_chs_mask = labels[epoch_idx] == 1
@@ -718,9 +771,11 @@ class _AutoReject(BaseAutoReject):
             reject_log.labels, reject_log.ch_names, this_picks)
 
         # interpolate copy to compute the clean .mean_
+        use_gpu = self.device is not None and self.device != 'cpu'
         _interpolate_bad_epochs(
             epochs_copy, interp_channels=interp_channels,
-            picks=self.picks_, verbose=self.verbose)
+            picks=self.picks_, verbose=self.verbose,
+            use_gpu=use_gpu, device=self.device)
         self.mean_ = _slicemean(
             epochs_copy.get_data(**_GDKW),
             np.nonzero(np.invert(reject_log.bad_epochs))[0], axis=0)
@@ -767,24 +822,148 @@ class _AutoReject(BaseAutoReject):
             return epochs_clean
 
 
-def _interpolate_bad_epochs(
-        epochs, interp_channels, picks, dots=None, verbose=True):
-    """Actually do the interpolation."""
+def _interpolate_single_epoch(epoch_data, info, interp_chs, dots, picks):
+    """Interpolate a single epoch (helper for parallelization).
+
+    Parameters
+    ----------
+    epoch_data : ndarray, shape (n_channels, n_times)
+        The data for a single epoch.
+    info : mne.Info
+        The info object.
+    interp_chs : list of str
+        Channel names to interpolate.
+    dots : tuple | None
+        Precomputed dots for interpolation.
+    picks : array-like
+        Channel indices to consider.
+
+    Returns
+    -------
+    interpolated_data : ndarray, shape (n_channels, n_times)
+        The interpolated epoch data.
+    """
+    epoch = EpochsArray(epoch_data[np.newaxis, :, :], info, verbose=False)
+    epoch.info['bads'] = interp_chs
+    interpolate_bads(epoch, dots=dots, picks=picks, reset_bads=True)
+    return epoch._data[0]
+
+
+def _interpolate_bad_epochs_gpu(epochs, interp_channels, picks,
+                                device=None, verbose=True):
+    """GPU-accelerated epoch interpolation.
+
+    Works directly on numpy arrays, uses cached interpolation matrices,
+    and modifies epochs._data in-place.
+
+    Parameters
+    ----------
+    epochs : mne.Epochs
+        The epochs to interpolate (modified in-place).
+    interp_channels : list of list of str
+        For each epoch, list of channel names to interpolate.
+    picks : array-like
+        Channel indices to consider.
+    device : str or None
+        GPU device to use.
+    verbose : bool
+        Whether to show progress bar.
+    """
+    from .gpu_interpolation import gpu_interpolate_bad_epochs
+
+    backend = get_backend()
+    if backend.name != 'torch':
+        raise RuntimeError('_interpolate_bad_epochs_gpu requires torch backend')
+
+    if device is None:
+        device = backend.device
+
+    picks = np.asarray(picks)
+
+    # Get positions for picked channels
+    pos = epochs._get_channel_positions(picks)
+    norms = np.linalg.norm(pos, axis=1, keepdims=True)
+    pos /= norms
+
+    # Build ch_name to pick_idx mapping
+    ch_name_to_pick_idx = {epochs.ch_names[p]: i for i, p in enumerate(picks)}
+
+    # Convert channel names to indices within picks
+    interp_ch_indices = []
+    for epoch_chs in interp_channels:
+        ch_indices = [
+            ch_name_to_pick_idx[ch] for ch in epoch_chs
+            if ch in ch_name_to_pick_idx
+        ]
+        interp_ch_indices.append(ch_indices)
+
+    data = epochs._data  # (n_epochs, n_channels, n_times)
+
+    # GPU interpolation - returns tensor
+    data_gpu = gpu_interpolate_bad_epochs(data, interp_ch_indices,
+                                          picks, pos, device=device)
+
+    # Copy back to epochs
+    epochs._data = data_gpu.cpu().numpy()
+
+
+def _interpolate_bad_epochs(epochs, interp_channels, picks, dots=None,
+                            verbose=True, n_jobs=1, use_gpu=False,
+                            device=None):
+    """Actually do the interpolation.
+
+    Parameters
+    ----------
+    epochs : mne.Epochs
+        The epochs to interpolate (modified in-place).
+    interp_channels : list of list of str
+        For each epoch, list of channel names to interpolate.
+    picks : array-like
+        Channel indices to consider.
+    dots : tuple | None
+        Precomputed dots for interpolation.
+    verbose : bool
+        Whether to show progress bar.
+    n_jobs : int
+        Number of parallel jobs. Default 1 (sequential).
+    use_gpu : bool
+        If True, use GPU-accelerated interpolation.
+    device : str or None
+        GPU device to use when use_gpu=True.
+    """
     assert len(epochs) == len(interp_channels)
+
+    # Try GPU path if requested
+    if use_gpu:
+        try:
+            _interpolate_bad_epochs_gpu(epochs, interp_channels,
+                                        picks, device=device,
+                                        verbose=verbose)
+            return
+        except Exception as e:
+            if verbose:
+                print('GPU interpolation failed, falling back to CPU: %s'
+                      % e)
+
     pos = 2
 
-    for epoch_idx, interp_chs in _pbar(
+    parallel = Parallel(n_jobs=n_jobs, verbose=0)
+    my_interp = delayed(_interpolate_single_epoch)
+
+    results = parallel(
+        my_interp(epochs._data[epoch_idx].copy(), epochs.info,
+                  interp_chs, dots, picks)
+        for epoch_idx, interp_chs in _pbar(
             list(enumerate(interp_channels)),
             desc='Repairing epochs',
-            position=pos, leave=True, verbose=verbose):
-        epoch = epochs[epoch_idx]
-        epoch.info['bads'] = interp_chs
-        interpolate_bads(epoch, dots=dots, picks=picks, reset_bads=True)
-        epochs._data[epoch_idx] = epoch._data
+            position=pos, leave=True, verbose=verbose))
+
+    for epoch_idx, interpolated_data in enumerate(results):
+        epochs._data[epoch_idx] = interpolated_data
 
 
 def _run_local_reject_cv(epochs, thresh_func, picks_, n_interpolate, cv,
-                         consensus, dots, verbose):
+                         consensus, dots, verbose, n_jobs=1):
     n_folds = cv.get_n_splits()
     loss = np.zeros((len(consensus), len(n_interpolate),
                      n_folds))
@@ -815,7 +994,8 @@ def _run_local_reject_cv(epochs, thresh_func, picks_, n_interpolate, cv,
         # for learning we need to go by channnel type, even for meg
         _interpolate_bad_epochs(
             epochs_interp, interp_channels=interp_channels,
-            picks=picks_, dots=dots, verbose=verbose)
+            picks=picks_, dots=dots, verbose=verbose,
+            n_jobs=n_jobs)
 
         # Hack to allow len(self.cv_.split(X)) as ProgressBar
         # assumes an iterable whereas self.cv_.split(X) is a
@@ -901,6 +1081,13 @@ class AutoReject:
     verbose : bool
         The verbosity of progress messages.
         If False, suppress all output messages.
+    device : str
+        Compute device for GPU acceleration. Options:
+        'auto' (default) automatically selects GPU if available and
+        beneficial (>50 epochs). 'cpu' forces CPU-only computation.
+        'cuda' forces NVIDIA GPU. 'mps' forces Apple Silicon GPU.
+        'gpu' auto-detects best available GPU.
+        If PyTorch is not installed, always falls back to CPU.
 
     Attributes
     ----------
@@ -923,7 +1110,8 @@ class AutoReject:
     def __init__(self, n_interpolate=None, consensus=None,
                  thresh_func=None, cv=10, picks=None,
                  thresh_method='bayesian_optimization',
-                 n_jobs=1, random_state=None, verbose=True):
+                 n_jobs=1, random_state=None, verbose=True,
+                 device='auto'):
         """Initialize the AutoReject class."""
         self.n_interpolate = n_interpolate
         self.consensus = consensus
@@ -933,6 +1121,7 @@ class AutoReject:
         self.picks = picks
         self.n_jobs = n_jobs
         self.random_state = random_state
+        self.device = device
 
         if self.consensus is None:
             self.consensus = np.linspace(0, 1.0, 11)
@@ -947,6 +1136,62 @@ class AutoReject:
                       random_state=self.random_state, n_jobs=self.n_jobs)
         return '%s(%s)' % (class_name, _pprint(params,
                                                offset=len(class_name),),)
+
+    def _should_use_gpu(self, epochs):
+        """Determine if GPU should be used based on device and data size.
+
+        Parameters
+        ----------
+        epochs : mne.Epochs
+            The epochs to process.
+
+        Returns
+        -------
+        use_gpu : bool
+            Whether to use GPU.
+        device : str
+            Device to use.
+        """
+        device = getattr(self, 'device', 'auto')
+
+        if device == 'cpu':
+            return False, 'cpu'
+
+        try:
+            from .gpu_pipeline import is_gpu_available, should_use_gpu
+
+            if not is_gpu_available():
+                return False, 'cpu'
+        except ImportError:
+            return False, 'cpu'
+
+        n_epochs = len(epochs)
+        if hasattr(self, 'picks_'):
+            n_channels = len(self.picks_)
+        else:
+            n_channels = epochs.get_data().shape[1]
+
+        if device == 'auto':
+            return should_use_gpu(n_epochs, n_channels)
+        elif device in ('gpu', 'mps', 'cuda'):
+            try:
+                import torch
+
+                if (device == 'mps' and
+                        hasattr(torch.backends, 'mps') and
+                        torch.backends.mps.is_available()):
+                    return True, 'mps'
+                elif device in ('gpu', 'cuda') and torch.cuda.is_available():
+                    return True, 'cuda'
+                elif device == 'gpu':
+                    if (hasattr(torch.backends, 'mps') and
+                            torch.backends.mps.is_available()):
+                        return True, 'mps'
+                return False, 'cpu'
+            except ImportError:
+                return False, 'cpu'
+
+        return False, 'cpu'
 
     def __getstate__(self):
         """Get the state of autoreject as a dictionary."""
@@ -1015,10 +1260,23 @@ class AutoReject:
             this_info = mne.pick_info(epochs.info, meg_picks, copy=True)
             self.dots = _compute_dots(this_info, templates=None)
 
-        thresh_func = partial(_compute_thresholds, n_jobs=self.n_jobs,
-                              method=self.thresh_method,
-                              random_state=self.random_state,
-                              dots=self.dots)
+        # Determine if we should use GPU
+        use_gpu, device = self._should_use_gpu(epochs)
+
+        if use_gpu:
+            from .gpu_pipeline import compute_thresholds_gpu
+
+            thresh_func = partial(compute_thresholds_gpu,
+                                  method=self.thresh_method,
+                                  random_state=self.random_state,
+                                  device=device)
+            if self.verbose:
+                print('Using GPU acceleration (device=%s)' % device)
+        else:
+            thresh_func = partial(_compute_thresholds, n_jobs=self.n_jobs,
+                                  method=self.thresh_method,
+                                  random_state=self.random_state,
+                                  dots=self.dots)
 
         if self.n_interpolate is None:
             if len(self.picks_) < 4:
@@ -1037,11 +1295,24 @@ class AutoReject:
         for ch_type, this_picks in picks_by_type:
             if self.verbose is not False:
                 print('Running autoreject on ch_type=%s' % ch_type)
-            this_local_reject, this_loss = \
-                _run_local_reject_cv(epochs, thresh_func, this_picks,
-                                     self.n_interpolate, self.cv_,
-                                     self.consensus, self.dots,
-                                     self.verbose)
+
+            if use_gpu:
+                from .gpu_pipeline import run_local_reject_cv_gpu_batch
+
+                this_local_reject, this_loss = \
+                    run_local_reject_cv_gpu_batch(
+                        epochs, thresh_func, this_picks,
+                        self.n_interpolate, self.cv_,
+                        self.consensus, self.dots,
+                        self.verbose, n_jobs=self.n_jobs,
+                        device=device)
+            else:
+                this_local_reject, this_loss = \
+                    _run_local_reject_cv(epochs, thresh_func, this_picks,
+                                         self.n_interpolate, self.cv_,
+                                         self.consensus, self.dots,
+                                         self.verbose,
+                                         n_jobs=self.n_jobs)
             self.threshes_.update(this_local_reject.threshes_)
 
             best_idx, best_jdx = \
@@ -1148,8 +1419,16 @@ class AutoReject:
         if reject_log is None:
             reject_log = self.get_reject_log(epochs)
         epochs_clean = epochs.copy()
-        _apply_interp(reject_log, epochs_clean, self.threshes_,
-                      self.picks_, self.dots, self.verbose)
+
+        # Determine if we should use GPU for interpolation
+        use_gpu, device = self._should_use_gpu(epochs)
+
+        if use_gpu:
+            _apply_interp_gpu(reject_log, epochs_clean, self.threshes_,
+                              self.picks_, device, self.verbose)
+        else:
+            _apply_interp(reject_log, epochs_clean, self.threshes_,
+                          self.picks_, self.dots, self.verbose)
 
         _apply_drop(reject_log, epochs_clean, self.threshes_, self.picks_,
                     self.verbose)
@@ -1217,6 +1496,39 @@ def _apply_interp(reject_log, epochs, threshes_, picks_, dots,
     _interpolate_bad_epochs(
         epochs, interp_channels=interp_channels,
         picks=picks_, dots=dots, verbose=verbose)
+
+
+def _apply_interp_gpu(reject_log, epochs, threshes_, picks_, device,
+                      verbose):
+    """Apply GPU-accelerated interpolation to epochs."""
+    from .gpu_interpolation import gpu_interpolate_bad_epochs
+
+    _check_fit(epochs, threshes_, picks_)
+    interp_channels = _get_interp_chs(
+        reject_log.labels, reject_log.ch_names, picks_)
+
+    # Convert channel names to indices within picks_
+    ch_name_to_pick_idx = {epochs.ch_names[p]: i
+                           for i, p in enumerate(picks_)}
+    interp_ch_indices = [
+        [ch_name_to_pick_idx[ch] for ch in epoch_chs
+         if ch in ch_name_to_pick_idx]
+        for epoch_chs in interp_channels
+    ]
+
+    if not any(len(chs) > 0 for chs in interp_ch_indices):
+        return
+
+    # Get normalized positions for picked channels
+    pos = epochs._get_channel_positions(picks_)
+    pos_norms = np.linalg.norm(pos, axis=1, keepdims=True)
+    pos_normalized = pos / pos_norms
+
+    data_gpu = gpu_interpolate_bad_epochs(
+        epochs._data, interp_ch_indices, picks_, pos_normalized,
+        device=device)
+
+    epochs._data[:] = data_gpu.cpu().numpy()
 
 
 def _apply_drop(reject_log, epochs, threshes_, picks_,
