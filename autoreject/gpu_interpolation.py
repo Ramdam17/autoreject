@@ -12,8 +12,14 @@ The implementation is based on:
 
 # Author: Rémy Ramadour <remy.ramadour.labs@gmail.com>
 
+from __future__ import annotations
+
+import logging
+
 import numpy as np
 from .backends import get_backend, is_device_array, DeviceArray
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "gpu_make_interpolation_matrix",
@@ -26,7 +32,7 @@ __all__ = [
 ]
 
 
-def is_cuda_device(device):
+def is_cuda_device(device: str | object) -> bool:
     """Check if device is CUDA (not MPS or CPU).
 
     This is used to determine compute strategy:
@@ -56,7 +62,7 @@ def is_cuda_device(device):
     return device_str.startswith("cuda")
 
 
-def legval_torch(x, c):
+def legval_torch(x: object, c: object) -> object:
     """Evaluate Legendre polynomial using Clenshaw's algorithm.
 
     PyTorch implementation of numpy.polynomial.legendre.legval.
@@ -158,7 +164,10 @@ def _normalize_vectors_torch(pos):
     return pos / norms
 
 
-def gpu_make_interpolation_matrix(pos_from, pos_to, alpha=1e-5, device=None):
+def gpu_make_interpolation_matrix(
+        pos_from: np.ndarray, pos_to: np.ndarray,
+        alpha: float = 1e-5,
+        device: str | None = None) -> DeviceArray:
     """Compute interpolation matrix based on spherical splines on GPU.
 
     PyTorch implementation of MNE's _make_interpolation_matrix.
@@ -278,7 +287,10 @@ def gpu_make_interpolation_matrix(pos_from, pos_to, alpha=1e-5, device=None):
     return DeviceArray(interpolation, backend, str(device))
 
 
-def gpu_do_interp_dots(data, interpolation, goods_idx, bads_idx, keep_on_device=True):
+def gpu_do_interp_dots(
+        data: np.ndarray, interpolation: object,
+        goods_idx: np.ndarray, bads_idx: np.ndarray,
+        keep_on_device: bool = True) -> DeviceArray:
     """Apply interpolation matrix to data on GPU.
 
     Uses batch matrix multiplication (bmm) for optimal GPU performance.
@@ -371,7 +383,9 @@ def gpu_do_interp_dots(data, interpolation, goods_idx, bads_idx, keep_on_device=
         return data_tensor.cpu().numpy()
 
 
-def gpu_interpolate_bads_eeg(inst, picks=None, keep_on_device=True):
+def gpu_interpolate_bads_eeg(
+        inst: object, picks: np.ndarray | None = None,
+        keep_on_device: bool = True) -> DeviceArray:
     """Interpolate bad EEG channels using GPU.
 
     GPU-accelerated version of MNE's _interpolate_bads_eeg.
@@ -546,7 +560,10 @@ def _get_loocv_interp_matrices(
     return interp_matrices
 
 
-def gpu_clean_by_interp(inst, picks=None, device=None, verbose=True):
+def gpu_clean_by_interp(
+        inst: object, picks: np.ndarray | None = None,
+        device: str | None = None,
+        verbose: bool = True) -> DeviceArray:
     """Clean epochs/evoked by LOOCV interpolation on GPU.
 
     GPU-accelerated version of clean_by_interp that keeps data on GPU
@@ -644,8 +661,10 @@ def gpu_clean_by_interp(inst, picks=None, device=None, verbose=True):
 
 
 def gpu_batch_interpolate_all_n_interp(
-    epochs, labels_list, picks, pos, device=None, verbose=True
-):
+    epochs: object, labels_list: list[np.ndarray],
+    picks: np.ndarray, pos: np.ndarray,
+    device: str | None = None, verbose: bool = True,
+) -> list:
     """Batch interpolation for ALL n_interpolate values at once.
 
     This is the key optimization: instead of interpolating sequentially
@@ -829,7 +848,10 @@ def gpu_batch_interpolate_all_n_interp(
     return results
 
 
-def gpu_interpolate_bad_epochs(data, interp_channels, picks, pos, device=None):
+def gpu_interpolate_bad_epochs(
+        data: np.ndarray, interp_channels: list,
+        picks: np.ndarray, pos: np.ndarray,
+        device: str | None = None) -> object:
     """GPU-accelerated interpolation for epochs with per-epoch bad channels.
 
     This is a GPU version of _interpolate_bad_epochs that keeps all data
@@ -976,17 +998,3 @@ def gpu_interpolate_bad_epochs(data, interp_channels, picks, pos, device=None):
         data_gpu[epoch_idx, bad_picks, :] = interpolated
 
     return data_gpu
-
-
-if __name__ == "__main__":
-    # Run benchmark when executed directly
-    import os
-
-    os.environ["AUTOREJECT_BACKEND"] = "torch"
-
-    # Reload backend
-    from . import backends
-
-    backends._backend = None
-
-    benchmark_interpolation_gpu()

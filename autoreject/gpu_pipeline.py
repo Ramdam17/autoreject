@@ -13,7 +13,13 @@ we batch ALL threshold evaluations into single GPU operations.
 
 # Author: Rémy Ramadour <remy.ramadour.labs@gmail.com>
 
+from __future__ import annotations
+
+import logging
+
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "GPUThresholdOptimizer",
@@ -46,7 +52,7 @@ def _get_device():
     return "cpu"
 
 
-def is_gpu_available():
+def is_gpu_available() -> bool:
     """Check if GPU acceleration is available."""
     torch = _get_torch()
     if torch is None:
@@ -102,7 +108,7 @@ class GPUThresholdOptimizer:
         Device to use ('mps', 'cuda', 'cpu'). Auto-detected if None.
     """
 
-    def __init__(self, device=None):
+    def __init__(self, device: str | None = None, verbose: bool = True) -> None:
         """Initialize the optimizer."""
         self.torch = _get_torch()
         if self.torch is None:
@@ -143,11 +149,11 @@ class GPUThresholdOptimizer:
         elif self.device == "cuda":
             self.torch.cuda.synchronize()
 
-    def clear_cache(self):
+    def clear_cache(self) -> None:
         """Clear the tensor cache."""
         self._cache.clear()
 
-    def compute_ptp_1d(self, data):
+    def compute_ptp_1d(self, data: np.ndarray) -> np.ndarray:
         """
         Compute peak-to-peak for single-channel data.
 
@@ -164,7 +170,7 @@ class GPUThresholdOptimizer:
         data_gpu = self._to_tensor(data)
         return data_gpu.max(dim=-1).values - data_gpu.min(dim=-1).values
 
-    def compute_ptp_2d(self, data):
+    def compute_ptp_2d(self, data: np.ndarray) -> np.ndarray:
         """
         Compute peak-to-peak for multi-channel data.
 
@@ -181,7 +187,13 @@ class GPUThresholdOptimizer:
         data_gpu = self._to_tensor(data)
         return data_gpu.max(dim=-1).values - data_gpu.min(dim=-1).values
 
-    def batched_channel_cv_loss(self, data_1d, thresholds, cv_splits, y=None):
+    def batched_channel_cv_loss(
+        self,
+        data_1d: np.ndarray,
+        thresholds: np.ndarray,
+        cv_splits: list[tuple[np.ndarray, np.ndarray]],
+        y: np.ndarray | None = None,
+    ) -> np.ndarray:
         """Compute cross-validated loss for ALL thresholds at once for a single channel.
 
         This replaces the inner loop of _compute_thresh where cross_val_score
@@ -746,15 +758,15 @@ class GPUThresholdOptimizer:
 
 def compute_thresholds_gpu(
     epochs,
-    method="bayesian_optimization",
-    random_state=None,
-    picks=None,
-    augment=True,
-    verbose=True,
-    n_jobs=1,
-    device=None,
-    dots=None,
-):
+    method: str = "bayesian_optimization",
+    random_state: int | None = None,
+    picks: np.ndarray | None = None,
+    augment: bool = True,
+    verbose: bool = True,
+    n_jobs: int = 1,
+    device: str | None = None,
+    dots: tuple | None = None,
+) -> dict[str, float]:
     """
     Compute channel-wise thresholds using GPU acceleration.
 
@@ -863,16 +875,16 @@ def compute_thresholds_gpu(
 
 def run_local_reject_cv_gpu(
     epochs,
-    thresh_func,
-    picks_,
-    n_interpolate,
+    thresh_func: callable,
+    picks_: np.ndarray,
+    n_interpolate: np.ndarray,
     cv,
-    consensus,
-    dots=None,
-    verbose=True,
-    n_jobs=1,
-    device=None,
-):
+    consensus: np.ndarray,
+    dots: tuple | None = None,
+    verbose: bool = True,
+    n_jobs: int = 1,
+    device: str | None = None,
+) -> tuple:
     """
     GPU-accelerated version of _run_local_reject_cv.
 
@@ -1253,23 +1265,23 @@ def _run_local_reject_cv_mps_hybrid(
                 loss[idx, jdx, fold] = -score
 
     if verbose:
-        print("  ✓ MPS hybrid processing complete!")
+        print("  MPS hybrid processing complete.")
 
     return local_reject, loss
 
 
 def run_local_reject_cv_gpu_batch(
     epochs,
-    thresh_func,
-    picks_,
-    n_interpolate,
+    thresh_func: callable,
+    picks_: np.ndarray,
+    n_interpolate: np.ndarray,
     cv,
-    consensus,
-    dots=None,
-    verbose=True,
-    n_jobs=1,
-    device=None,
-):
+    consensus: np.ndarray,
+    dots: tuple | None = None,
+    verbose: bool = True,
+    n_jobs: int = 1,
+    device: str | None = None,
+) -> tuple:
     """
     FULLY BATCHED GPU version of _run_local_reject_cv.
 
@@ -1469,12 +1481,14 @@ def run_local_reject_cv_gpu_batch(
     optimizer.clear_cache()
 
     if verbose:
-        print("  ✓ Batch processing complete!")
+        print("  Batch processing complete.")
 
     return local_reject, loss
 
 
-def should_use_gpu(n_epochs, n_channels, device=None):
+def should_use_gpu(
+    n_epochs: int, n_channels: int, device: str | None = None
+) -> tuple[bool, str]:
     """
     Determine if GPU acceleration would be beneficial.
 

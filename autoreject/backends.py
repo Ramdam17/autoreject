@@ -38,12 +38,18 @@ AUTOREJECT_BACKEND : str
 
 # Author: Rémy Ramadour <remy.ramadour.labs@gmail.com>
 
+from __future__ import annotations
+
+import logging
 import os
 import warnings
+from collections.abc import Generator
 from contextlib import contextmanager
 from functools import lru_cache
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 __all__ = [
@@ -103,44 +109,44 @@ class DeviceArray:
     >>> numpy_result = backend.to_numpy(result)
     """
 
-    def __init__(self, data, backend, device):
+    def __init__(self, data: object, backend: BaseBackend, device: str) -> None:
         self._data = data
         self._backend = backend
         self._device = device
 
     @property
-    def data(self):
+    def data(self) -> object:
         """Return the underlying array."""
         return self._data
 
     @property
-    def backend(self):
+    def backend(self) -> BaseBackend:
         """Return the backend managing this array."""
         return self._backend
 
     @property
-    def device(self):
+    def device(self) -> str:
         """Return the device location."""
         return self._device
 
     @property
-    def shape(self):
+    def shape(self) -> tuple:
         """Return the array shape."""
         return self._data.shape
 
     @property
-    def dtype(self):
+    def dtype(self) -> object:
         """Return the array dtype."""
         if hasattr(self._data, "dtype"):
             return self._data.dtype
         return type(self._data)
 
     @property
-    def ndim(self):
+    def ndim(self) -> int:
         """Return the number of dimensions."""
         return len(self.shape)
 
-    def numpy(self):
+    def numpy(self) -> np.ndarray:
         """Convert to NumPy array (transfers from GPU if needed)."""
         return self._backend.to_numpy(self._data)
 
@@ -161,7 +167,7 @@ class DeviceArray:
         return result
 
 
-def is_device_array(arr):
+def is_device_array(arr: object) -> bool:
     """Check if an array is a DeviceArray.
 
     Parameters
@@ -201,7 +207,7 @@ def _unwrap_device_array(arr):
 
 
 @lru_cache(maxsize=1)
-def detect_hardware():
+def detect_hardware() -> dict[str, bool | str]:
     """Detect available hardware acceleration.
 
     Returns
@@ -250,7 +256,7 @@ def detect_hardware():
     return available
 
 
-def get_backend_names():
+def get_backend_names() -> list[str]:
     """Get list of available backend names.
 
     Returns
@@ -277,7 +283,7 @@ def get_backend_names():
 _BACKEND_CACHE = {}
 
 
-def get_backend(prefer=None):
+def get_backend(prefer: str | None = None) -> BaseBackend:
     """Get the best available compute backend.
 
     Parameters
@@ -357,7 +363,7 @@ def get_backend(prefer=None):
 
 
 @contextmanager
-def force_cpu_backend():
+def force_cpu_backend() -> Generator[None, None, None]:
     """Context manager to temporarily force the CPU (NumPy) backend.
 
     This is used for MPS fallback to CPU when float64 precision is required.
@@ -391,7 +397,7 @@ def force_cpu_backend():
 
 
 @contextmanager
-def use_backend(backend_name):
+def use_backend(backend_name: str) -> Generator[None, None, None]:
     """Context manager to temporarily use a specific backend.
 
     This provides an MNE-style interface for backend selection, similar to
@@ -463,7 +469,7 @@ def _try_load_backend(name):
         return None
 
 
-def clear_backend_cache():
+def clear_backend_cache() -> None:
     """Clear the backend cache.
 
     Useful for testing or when hardware configuration changes.
@@ -497,7 +503,7 @@ class BaseBackend:
     device = "cpu"
     supports_gpu = False
 
-    def to_device(self, data):
+    def to_device(self, data: np.ndarray | DeviceArray) -> DeviceArray:
         """Transfer data to the backend's device.
 
         For GPU backends, this transfers data to GPU memory.
@@ -522,7 +528,10 @@ class BaseBackend:
         """
         raise NotImplementedError
 
-    def ptp(self, data, axis=-1, keep_on_device=False):
+    def ptp(
+        self, data: np.ndarray | DeviceArray, axis: int = -1,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Compute peak-to-peak (max - min) along an axis.
 
         Parameters
@@ -542,7 +551,10 @@ class BaseBackend:
         """
         raise NotImplementedError
 
-    def median(self, data, axis=None, keep_on_device=False):
+    def median(
+        self, data: np.ndarray | DeviceArray, axis: int | None = None,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray | np.floating:
         """Compute median along an axis.
 
         Parameters
@@ -562,7 +574,10 @@ class BaseBackend:
         """
         raise NotImplementedError
 
-    def correlation(self, x, y, keep_on_device=False):
+    def correlation(
+        self, x: np.ndarray | DeviceArray, y: np.ndarray | DeviceArray,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Compute correlation between two arrays.
 
         Parameters
@@ -582,7 +597,10 @@ class BaseBackend:
         """
         raise NotImplementedError
 
-    def matmul(self, a, b, keep_on_device=False):
+    def matmul(
+        self, a: np.ndarray | DeviceArray, b: np.ndarray | DeviceArray,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Matrix multiplication.
 
         Parameters
@@ -602,7 +620,7 @@ class BaseBackend:
         """
         raise NotImplementedError
 
-    def to_numpy(self, arr):
+    def to_numpy(self, arr: np.ndarray | DeviceArray) -> np.ndarray:
         """Convert array to NumPy ndarray.
 
         Parameters
@@ -617,7 +635,7 @@ class BaseBackend:
         """
         raise NotImplementedError
 
-    def is_on_device(self, arr):
+    def is_on_device(self, arr: np.ndarray | DeviceArray) -> bool:
         """Check if array is on this backend's device.
 
         Parameters
@@ -654,13 +672,16 @@ class NumpyBackend(BaseBackend):
     device = "cpu"
     supports_gpu = False
 
-    def to_device(self, data):
+    def to_device(self, data: np.ndarray | DeviceArray) -> DeviceArray:
         """Wrap data in DeviceArray (no transfer, already on CPU)."""
         data = _unwrap_device_array(data)
         arr = np.asarray(data)
         return DeviceArray(arr, self, "cpu")
 
-    def ptp(self, data, axis=-1, keep_on_device=False):
+    def ptp(
+        self, data: np.ndarray | DeviceArray, axis: int = -1,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Compute peak-to-peak using np.ptp."""
         data = _unwrap_device_array(data)
         result = np.ptp(data, axis=axis)
@@ -668,7 +689,10 @@ class NumpyBackend(BaseBackend):
             return DeviceArray(result, self, "cpu")
         return result
 
-    def median(self, data, axis=None, keep_on_device=False):
+    def median(
+        self, data: np.ndarray | DeviceArray, axis: int | None = None,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray | np.floating:
         """Compute median using np.median."""
         data = _unwrap_device_array(data)
         result = np.median(data, axis=axis)
@@ -676,7 +700,10 @@ class NumpyBackend(BaseBackend):
             return DeviceArray(result, self, "cpu")
         return result
 
-    def correlation(self, x, y, keep_on_device=False):
+    def correlation(
+        self, x: np.ndarray | DeviceArray, y: np.ndarray | DeviceArray,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Compute correlation between arrays.
 
         Uses the formula: corr = sum(x*y) / (||x|| * ||y||)
@@ -690,7 +717,10 @@ class NumpyBackend(BaseBackend):
             return DeviceArray(result, self, "cpu")
         return result
 
-    def matmul(self, a, b, keep_on_device=False):
+    def matmul(
+        self, a: np.ndarray | DeviceArray, b: np.ndarray | DeviceArray,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Matrix multiplication using np.matmul."""
         a = _unwrap_device_array(a)
         b = _unwrap_device_array(b)
@@ -699,7 +729,7 @@ class NumpyBackend(BaseBackend):
             return DeviceArray(result, self, "cpu")
         return result
 
-    def to_numpy(self, arr):
+    def to_numpy(self, arr: np.ndarray | DeviceArray) -> np.ndarray:
         """Return array as-is (already NumPy)."""
         arr = _unwrap_device_array(arr)
         return np.asarray(arr)
@@ -741,7 +771,7 @@ class TorchBackend(BaseBackend):
     name = "torch"
     supports_gpu = True
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize PyTorch backend."""
         import torch
 
@@ -789,7 +819,7 @@ class TorchBackend(BaseBackend):
             return DeviceArray(tensor, self, self.device)
         return tensor.cpu().numpy()
 
-    def to_device(self, data):
+    def to_device(self, data: np.ndarray | DeviceArray) -> DeviceArray:
         """Transfer data to GPU.
 
         Parameters
@@ -805,13 +835,19 @@ class TorchBackend(BaseBackend):
         tensor = self._to_tensor(data)
         return DeviceArray(tensor, self, self.device)
 
-    def ptp(self, data, axis=-1, keep_on_device=False):
+    def ptp(
+        self, data: np.ndarray | DeviceArray, axis: int = -1,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Compute peak-to-peak using PyTorch."""
         t = self._to_tensor(data)
         result = t.max(dim=axis).values - t.min(dim=axis).values
         return self._maybe_wrap(result, keep_on_device)
 
-    def median(self, data, axis=None, keep_on_device=False):
+    def median(
+        self, data: np.ndarray | DeviceArray, axis: int | None = None,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray | np.floating:
         """Compute median using PyTorch.
 
         Note: torch.median behaves differently from numpy.median for arrays
@@ -858,7 +894,10 @@ class TorchBackend(BaseBackend):
 
         return self._maybe_wrap(result, keep_on_device)
 
-    def correlation(self, x, y, keep_on_device=False):
+    def correlation(
+        self, x: np.ndarray | DeviceArray, y: np.ndarray | DeviceArray,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Compute correlation using PyTorch."""
         tx = self._to_tensor(x)
         ty = self._to_tensor(y)
@@ -869,14 +908,17 @@ class TorchBackend(BaseBackend):
 
         return self._maybe_wrap(result, keep_on_device)
 
-    def matmul(self, a, b, keep_on_device=False):
+    def matmul(
+        self, a: np.ndarray | DeviceArray, b: np.ndarray | DeviceArray,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Matrix multiplication using PyTorch."""
         ta = self._to_tensor(a)
         tb = self._to_tensor(b)
         result = self._torch.matmul(ta, tb)
         return self._maybe_wrap(result, keep_on_device)
 
-    def to_numpy(self, arr):
+    def to_numpy(self, arr: np.ndarray | DeviceArray) -> np.ndarray:
         """Convert tensor to NumPy array."""
         # Unwrap DeviceArray
         if isinstance(arr, DeviceArray):
@@ -886,7 +928,7 @@ class TorchBackend(BaseBackend):
             return arr.cpu().numpy()
         return np.asarray(arr)
 
-    def is_on_device(self, arr):
+    def is_on_device(self, arr: np.ndarray | DeviceArray) -> bool:
         """Check if array is on this backend's GPU."""
         if isinstance(arr, DeviceArray):
             return arr.device == self.device
@@ -898,28 +940,39 @@ class TorchBackend(BaseBackend):
     # Extended GPU operations for data-on-GPU architecture
     # =========================================================================
 
-    def zeros(self, shape, keep_on_device=True):
+    def zeros(
+        self, shape: tuple[int, ...], keep_on_device: bool = True,
+    ) -> np.ndarray | DeviceArray:
         """Create zeros array on device."""
         result = self._torch.zeros(shape, dtype=self._dtype, device=self._device)
         return self._maybe_wrap(result, keep_on_device)
 
-    def ones(self, shape, keep_on_device=True):
+    def ones(
+        self, shape: tuple[int, ...], keep_on_device: bool = True,
+    ) -> np.ndarray | DeviceArray:
         """Create ones array on device."""
         result = self._torch.ones(shape, dtype=self._dtype, device=self._device)
         return self._maybe_wrap(result, keep_on_device)
 
-    def empty(self, shape, keep_on_device=True):
+    def empty(
+        self, shape: tuple[int, ...], keep_on_device: bool = True,
+    ) -> np.ndarray | DeviceArray:
         """Create uninitialized array on device."""
         result = self._torch.empty(shape, dtype=self._dtype, device=self._device)
         return self._maybe_wrap(result, keep_on_device)
 
-    def sqrt(self, data, keep_on_device=False):
+    def sqrt(
+        self, data: np.ndarray | DeviceArray, keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Compute square root."""
         t = self._to_tensor(data)
         result = self._torch.sqrt(t)
         return self._maybe_wrap(result, keep_on_device)
 
-    def sum(self, data, axis=None, keep_on_device=False):
+    def sum(
+        self, data: np.ndarray | DeviceArray, axis: int | None = None,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Compute sum along axis."""
         t = self._to_tensor(data)
         if axis is None:
@@ -928,7 +981,10 @@ class TorchBackend(BaseBackend):
             result = t.sum(dim=axis)
         return self._maybe_wrap(result, keep_on_device)
 
-    def mean(self, data, axis=None, keep_on_device=False):
+    def mean(
+        self, data: np.ndarray | DeviceArray, axis: int | None = None,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Compute mean along axis."""
         t = self._to_tensor(data)
         if axis is None:
@@ -937,7 +993,10 @@ class TorchBackend(BaseBackend):
             result = t.mean(dim=axis)
         return self._maybe_wrap(result, keep_on_device)
 
-    def max(self, data, axis=None, keep_on_device=False):
+    def max(
+        self, data: np.ndarray | DeviceArray, axis: int | None = None,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Compute max along axis."""
         t = self._to_tensor(data)
         if axis is None:
@@ -946,7 +1005,10 @@ class TorchBackend(BaseBackend):
             result = t.max(dim=axis).values
         return self._maybe_wrap(result, keep_on_device)
 
-    def min(self, data, axis=None, keep_on_device=False):
+    def min(
+        self, data: np.ndarray | DeviceArray, axis: int | None = None,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Compute min along axis."""
         t = self._to_tensor(data)
         if axis is None:
@@ -955,13 +1017,19 @@ class TorchBackend(BaseBackend):
             result = t.min(dim=axis).values
         return self._maybe_wrap(result, keep_on_device)
 
-    def abs(self, data, keep_on_device=False):
+    def abs(
+        self, data: np.ndarray | DeviceArray, keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Compute absolute value."""
         t = self._to_tensor(data)
         result = self._torch.abs(t)
         return self._maybe_wrap(result, keep_on_device)
 
-    def where(self, condition, x, y, keep_on_device=False):
+    def where(
+        self, condition: np.ndarray | DeviceArray,
+        x: np.ndarray | DeviceArray, y: np.ndarray | DeviceArray,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Element-wise selection based on condition."""
         cond = self._to_tensor(condition)
         tx = self._to_tensor(x)
@@ -969,25 +1037,36 @@ class TorchBackend(BaseBackend):
         result = self._torch.where(cond.bool(), tx, ty)
         return self._maybe_wrap(result, keep_on_device)
 
-    def concatenate(self, arrays, axis=0, keep_on_device=False):
+    def concatenate(
+        self, arrays: list[np.ndarray | DeviceArray], axis: int = 0,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Concatenate arrays along axis."""
         tensors = [self._to_tensor(a) for a in arrays]
         result = self._torch.cat(tensors, dim=axis)
         return self._maybe_wrap(result, keep_on_device)
 
-    def stack(self, arrays, axis=0, keep_on_device=False):
+    def stack(
+        self, arrays: list[np.ndarray | DeviceArray], axis: int = 0,
+        keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Stack arrays along new axis."""
         tensors = [self._to_tensor(a) for a in arrays]
         result = self._torch.stack(tensors, dim=axis)
         return self._maybe_wrap(result, keep_on_device)
 
-    def argsort(self, data, axis=-1, descending=False, keep_on_device=False):
+    def argsort(
+        self, data: np.ndarray | DeviceArray, axis: int = -1,
+        descending: bool = False, keep_on_device: bool = False,
+    ) -> np.ndarray | DeviceArray:
         """Return indices that would sort the array."""
         t = self._to_tensor(data)
         result = t.argsort(dim=axis, descending=descending)
         return self._maybe_wrap(result, keep_on_device)
 
-    def copy(self, data, keep_on_device=True):
+    def copy(
+        self, data: np.ndarray | DeviceArray, keep_on_device: bool = True,
+    ) -> np.ndarray | DeviceArray:
         """Create a copy of the array on device."""
         t = self._to_tensor(data)
         result = t.clone()
