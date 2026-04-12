@@ -78,20 +78,26 @@ For faster processing on large datasets, GPU acceleration is available via PyTor
 
     pip install autoreject[gpu]
 
-To enable GPU acceleration, you can either set an environment variable::
+To enable GPU acceleration, pass the ``device`` parameter (recommended)::
+
+    from autoreject import AutoReject
+
+    ar = AutoReject(device='auto')  # auto-detect GPU, or 'cuda'/'mps'/'cpu'
+    epochs_clean = ar.fit_transform(epochs)
+
+You can also set an environment variable::
 
     export AUTOREJECT_BACKEND=torch
 
-Or use the context manager in Python (recommended)::
+Or use the context manager::
 
-    from autoreject import AutoReject
     from autoreject.backends import use_backend
 
     with use_backend('torch'):
         ar = AutoReject()
         epochs_clean = ar.fit_transform(epochs)
 
-The backend automatically detects and uses available GPU hardware (CUDA on Linux/Windows, MPS on macOS with Apple Silicon).
+The backend automatically detects and uses available GPU hardware (CUDA on Linux/Windows, MPS on macOS with Apple Silicon). With ``device='auto'``, GPU is used only when beneficial (datasets with >50 epochs).
 
 Quickstart
 ==========

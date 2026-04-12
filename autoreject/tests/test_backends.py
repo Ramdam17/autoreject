@@ -825,3 +825,41 @@ class TestMultiBackendConsistency:
             reject_log_torch.bad_epochs,
             err_msg="reject_log.bad_epochs differ between backends"
         )
+
+
+class TestContextManagers:
+    """Tests for use_backend and force_cpu_backend context managers."""
+
+    def test_use_backend_nesting(self):
+        """Nested use_backend restores outer backend on exit."""
+        from autoreject.backends import use_backend, get_backend
+
+        with use_backend('numpy'):
+            assert get_backend().name == 'numpy'
+            with use_backend('torch'):
+                assert get_backend().name == 'torch'
+            # Outer backend should be restored
+            assert get_backend().name == 'numpy'
+
+    def test_force_cpu_backend(self):
+        """force_cpu_backend forces numpy and restores on exit."""
+        from autoreject.backends import (force_cpu_backend, get_backend,
+                                         use_backend)
+
+        with use_backend('torch'):
+            assert get_backend().name == 'torch'
+            with force_cpu_backend():
+                assert get_backend().name == 'numpy'
+            # torch should be restored
+            assert get_backend().name == 'torch'
+
+    def test_device_array_from_numpy(self):
+        """DeviceArray wraps a plain numpy array."""
+        from autoreject.backends import DeviceArray, NumpyBackend
+
+        data = np.array([1.0, 2.0, 3.0])
+        backend = NumpyBackend()
+        da = DeviceArray(data, backend, 'cpu')
+        assert da.shape == (3,)
+        assert da.device == 'cpu'
+        np.testing.assert_array_equal(da.numpy(), data)

@@ -241,5 +241,76 @@ class TestGPUDoInterpDots:
         assert result.backend.name == 'torch'
 
 
+class TestIsCudaDevice:
+    """Tests for is_cuda_device utility."""
+
+    def test_mps_is_not_cuda(self):
+        """'mps' is not a CUDA device."""
+        from autoreject.gpu_interpolation import is_cuda_device
+        assert is_cuda_device('mps') is False
+
+    def test_cuda_is_cuda(self):
+        """'cuda' and 'cuda:0' are CUDA devices."""
+        from autoreject.gpu_interpolation import is_cuda_device
+        assert is_cuda_device('cuda') is True
+        assert is_cuda_device('cuda:0') is True
+
+    def test_cpu_is_not_cuda(self):
+        """'cpu' is not a CUDA device."""
+        from autoreject.gpu_interpolation import is_cuda_device
+        assert is_cuda_device('cpu') is False
+
+    def test_torch_device_object(self):
+        """torch.device objects are handled."""
+        from autoreject.gpu_interpolation import is_cuda_device
+        assert is_cuda_device(torch.device('cpu')) is False
+
+
+class TestGpuInterpolateBadsEeg:
+    """Tests for gpu_interpolate_bads_eeg."""
+
+    def test_returns_device_array(self):
+        """gpu_interpolate_bads_eeg returns a DeviceArray."""
+        import mne
+        from autoreject.gpu_interpolation import gpu_interpolate_bads_eeg
+
+        # Create minimal epochs with valid montage and marked bads
+        montage = mne.channels.make_standard_montage('standard_1020')
+        ch_names = montage.ch_names[:10]
+        info = mne.create_info(ch_names=ch_names, sfreq=100.0,
+                               ch_types='eeg')
+        info.set_montage(montage)
+        info['bads'] = [ch_names[0]]
+
+        rng = np.random.RandomState(42)
+        data = rng.randn(5, len(ch_names), 100) * 1e-5
+        epochs = mne.EpochsArray(data, info)
+
+        result = gpu_interpolate_bads_eeg(epochs)
+        assert is_device_array(result)
+        # Shape should match input
+        assert result.shape == data.shape
+
+    def test_no_bads_returns_unchanged(self):
+        """With no bads, data should be essentially unchanged."""
+        import mne
+        from autoreject.gpu_interpolation import gpu_interpolate_bads_eeg
+
+        montage = mne.channels.make_standard_montage('standard_1020')
+        ch_names = montage.ch_names[:10]
+        info = mne.create_info(ch_names=ch_names, sfreq=100.0,
+                               ch_types='eeg')
+        info.set_montage(montage)
+        # No bads
+        info['bads'] = []
+
+        rng = np.random.RandomState(42)
+        data = rng.randn(5, len(ch_names), 100) * 1e-5
+        epochs = mne.EpochsArray(data, info)
+
+        result = gpu_interpolate_bads_eeg(epochs)
+        np.testing.assert_allclose(result.numpy(), data, atol=1e-10)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
