@@ -43,6 +43,9 @@ dependencies = [
 [project.optional-dependencies]
 # Variants with dependencies that will get installed on top of those listed unter
 # project.dependencies
+gpu = [
+    "torch >= 2.0",
+]
 test = [
     "mne_qt_browser",
     "PyQt6!=6.6.1",  # see line below

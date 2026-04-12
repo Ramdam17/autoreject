@@ -15,6 +15,10 @@ What's new?
 Changelog
 ~~~~~~~~~
 
+- Add optional GPU acceleration via PyTorch backend (CUDA and Apple MPS).
+  Use ``AutoReject(device='gpu')`` to enable, or set the
+  ``AUTOREJECT_BACKEND=torch`` environment variable, or use the
+  ``use_backend()`` context manager, by `Rémy Ramadour`_ in :github:`#347`
 - The package build backend was switched from ``setuptools`` to ``hatchling``. For users, nothing should change, by `Richard Höchenberger`_ in :github:`#335`
 - ``autoreject`` now requires a minimum Python version of 3.10, by `Stefan Appelhoff`_ in :github:`#339`
 
@@ -172,3 +176,4 @@ Changelog
 .. _Eric Larson: https://larsoner.com
 .. _Paul Bogdan: http://pbogdan.com/
 .. _Richard Höchenberger: https://github.com/hoechenberger
+.. _Rémy Ramadour: https://github.com/Ramdam17
