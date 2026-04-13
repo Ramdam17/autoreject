@@ -52,3 +52,8 @@ benchmarks/orchestrator_log_*.json
 
 # Claude Code user-specific settings
 .claude/settings.local.json
+
+# Fork-local (not part of upstream)
+Benchmark/
+.claude/
+uv.lock
