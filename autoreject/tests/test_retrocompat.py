@@ -34,43 +34,40 @@ REFERENCES_DIR = Path(__file__).parent / "references"
 
 
 # =============================================================================
-# Module-level setup: Force NumPy backend for ALL tests in this module
+# Force the NumPy backend for the tests in this module -- and only these
 # =============================================================================
-
-# Store original value ONCE at module import time
-_ORIGINAL_BACKEND_ENV = os.environ.get('AUTOREJECT_BACKEND')
-
-# Force NumPy backend at module import time (BEFORE any fixtures run)
-os.environ['AUTOREJECT_BACKEND'] = 'numpy'
-clear_backend_cache()
-
-
-@pytest.fixture(scope='session', autouse=True)
-def restore_backend_after_retrocompat():
-    """Restore original backend setting after all retrocompat tests."""
-    yield
-    # Restore original value after all tests
-    if _ORIGINAL_BACKEND_ENV is None:
-        os.environ.pop('AUTOREJECT_BACKEND', None)
-    else:
-        os.environ['AUTOREJECT_BACKEND'] = _ORIGINAL_BACKEND_ENV
-    clear_backend_cache()
+#
+# This used to be done at module *import* time, which leaks: pytest imports
+# every test module during collection, so AUTOREJECT_BACKEND=numpy was set
+# for the entire session and only restored by a session-scoped fixture at
+# the very end. That silently disables GPU testing everywhere else --
+# should_use_gpu() short-circuits to ('cpu', False) whenever it sees
+# AUTOREJECT_BACKEND=numpy, so a test meaning to exercise the GPU path
+# would keep passing while running on CPU.
+#
+# An autouse fixture runs before every test in this module, which is early
+# enough for reproducibility against the reference data, and restores the
+# previous value afterwards so nothing leaks out.
 
 
 @pytest.fixture(autouse=True)
-def ensure_numpy_backend_per_test():
-    """Ensure NumPy backend is active for each test.
-    
-    This provides a second layer of protection to ensure exact numerical
-    reproducibility with reference data generated using NumPy operations.
+def force_numpy_backend_for_this_module():
+    """Pin the NumPy backend for one test, then restore what was there.
+
+    Exact reproducibility against the ``references/*.npz`` fixtures requires
+    NumPy operations, since that is what generated them.
     """
-    # Clear cache and re-apply at start of each test
+    previous = os.environ.get('AUTOREJECT_BACKEND')
     clear_backend_cache()
     os.environ['AUTOREJECT_BACKEND'] = 'numpy'
-    
+
     yield
-    
-    # Keep numpy backend for subsequent tests in this module
+
+    if previous is None:
+        os.environ.pop('AUTOREJECT_BACKEND', None)
+    else:
+        os.environ['AUTOREJECT_BACKEND'] = previous
+    clear_backend_cache()
 
 
 def _load_reference(name):
