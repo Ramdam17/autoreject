@@ -109,7 +109,36 @@ class GPUThresholdOptimizer:
             raise ImportError("PyTorch is required for GPUThresholdOptimizer")
 
         self.device = device or _get_device()
+        self.dtype = self._resolve_dtype(self.device)
         self._cache = {}
+
+    def _resolve_dtype(self, device):
+        """Return the widest float dtype the device supports.
+
+        Mirrors the policy already applied by ``backends.TorchBackend``:
+        float64 on CUDA and CPU, float32 on MPS (which supports nothing
+        wider).
+
+        This must not be bypassed. The threshold search is a *discrete*
+        selection over a grid of candidate peak-to-peak values, so a
+        float32 rounding of ~1e-7 relative can move the selected grid
+        point. Downstream stages (ICA, ICLabel's 0.5 exclusion cut,
+        AutoReject's consensus/n_interpolate grid) are themselves
+        discrete, which turns that rounding into a different set of
+        retained epochs rather than a slightly different number.
+
+        Parameters
+        ----------
+        device : str or torch.device
+            Target device.
+
+        Returns
+        -------
+        torch.dtype
+            ``torch.float32`` for MPS, ``torch.float64`` otherwise.
+        """
+        return (self.torch.float32 if str(device).lower().startswith("mps")
+                else self.torch.float64)
 
     def _to_tensor(self, data, dtype=None, cache_key=None):
         """Convert numpy array to GPU tensor.
@@ -119,7 +148,8 @@ class GPUThresholdOptimizer:
         data : np.ndarray
             Data to convert
         dtype : torch.dtype, optional
-            Tensor dtype
+            Tensor dtype. Defaults to ``self.dtype`` (the widest dtype the
+            device supports), not to float32.
         cache_key : str, optional
             If provided, cache the tensor with this key. Only use for
             static data that won't change (e.g., epochs data that's
@@ -129,7 +159,7 @@ class GPUThresholdOptimizer:
             return self._cache[cache_key]
 
         if dtype is None:
-            dtype = self.torch.float32
+            dtype = self.dtype
         tensor = self.torch.tensor(data, dtype=dtype, device=self.device)
 
         if cache_key is not None:
@@ -213,7 +243,9 @@ class GPUThresholdOptimizer:
         ptp_1d = data_1d.max(dim=-1).values - data_1d.min(dim=-1).values  # (n_epochs,)
 
         # Accumulate fold losses
-        fold_losses = self.torch.zeros((n_folds, n_thresh), device=self.device)
+        fold_losses = self.torch.zeros(
+            (n_folds, n_thresh), device=self.device, dtype=self.dtype
+        )
 
         for fold_idx, (train_idx, test_idx) in enumerate(cv_splits):
             # Get train/test indices
@@ -377,7 +409,9 @@ class GPUThresholdOptimizer:
             # good_train: (n_train, n_channels, n_thresh)
             #   -> (n_channels, n_train, n_thresh)
             data_perm = data_train.permute(1, 2, 0)  # (c, t, train)
-            good_perm = good_train.permute(1, 0, 2).float()  # (c, train, th)
+            # Cast the mask to the data dtype -- .float() would force
+            # float32 and silently narrow a float64 bmm.
+            good_perm = good_train.permute(1, 0, 2).to(data_perm.dtype)
 
             # BMM: (c, t, train) @ (c, train, th) = (c, t, th)
             masked_sum = self.torch.bmm(
@@ -468,7 +502,9 @@ class GPUThresholdOptimizer:
             thresh_gpu = self._to_tensor(thresholds)
 
             # Accumulate fold losses
-            fold_losses = self.torch.zeros((n_folds, n_thresh), device=self.device)
+            fold_losses = self.torch.zeros(
+            (n_folds, n_thresh), device=self.device, dtype=self.dtype
+        )
 
             for fold_idx in range(n_folds):
                 train_idx_t = train_indices[fold_idx]
@@ -1023,7 +1059,9 @@ def run_local_reject_cv_gpu(
 
                 # Allocate tensor for all scores in this fold
                 n_consensus = len(consensus)
-                scores_gpu = optimizer.torch.zeros(n_consensus, device=optimizer.device)
+                scores_gpu = optimizer.torch.zeros(
+                    n_consensus, device=optimizer.device, dtype=optimizer.dtype
+                )
 
                 for idx, this_consensus in enumerate(consensus):
                     n_channels = len(picks_)
@@ -1424,7 +1462,8 @@ def run_local_reject_cv_gpu_batch(
 
             # Allocate tensor for all scores in this fold
             scores_gpu = optimizer.torch.zeros(
-                n_consensus_values, device=optimizer.device
+                n_consensus_values, device=optimizer.device,
+                dtype=optimizer.dtype
             )
 
             for idx, this_consensus in enumerate(consensus):
