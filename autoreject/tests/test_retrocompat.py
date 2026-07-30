@@ -496,8 +496,7 @@ class TestLocalRejectCVRetrocompat:
         
         # Note: Some loss values may be inf, handle them separately
         finite_mask = np.isfinite(loss) & np.isfinite(ref_loss)
-        inf_mask = np.isinf(loss) & np.isinf(ref_loss)
-        
+
         # All inf positions should match
         assert_array_equal(
             np.isinf(loss), np.isinf(ref_loss),

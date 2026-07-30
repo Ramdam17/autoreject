@@ -119,13 +119,21 @@ class GPUThresholdOptimizer:
         float64 on CUDA and CPU, float32 on MPS (which supports nothing
         wider).
 
-        This must not be bypassed. The threshold search is a *discrete*
-        selection over a grid of candidate peak-to-peak values, so a
-        float32 rounding of ~1e-7 relative can move the selected grid
-        point. Downstream stages (ICA, ICLabel's 0.5 exclusion cut,
-        AutoReject's consensus/n_interpolate grid) are themselves
-        discrete, which turns that rounding into a different set of
-        retained epochs rather than a slightly different number.
+        Honouring this makes the threshold search reproduce the frozen
+        reference in ``legacy/`` bit for bit on a float64 device; forcing
+        float32 there left a ~4e-8 median relative deviation for no
+        benefit, since the device supported float64 natively.
+
+        Note on scope, so this is not over-claimed: that deviation is
+        *not* on its own enough to move a selected grid point. The
+        measured relative gap between the best and second-best grid point
+        is >= 2.2e-6 across 32-128 channels and 30-400 epochs, i.e. at
+        least an order of magnitude above the float32 rounding, and no
+        channel tested had a gap below 1e-7. The justification for float64
+        here is reproducibility against the reference, not a demonstrated
+        change in which epochs get rejected.
+
+        See ``docs/analyses/`` for the measurements.
 
         Parameters
         ----------
