@@ -354,7 +354,8 @@ class GPUThresholdOptimizer:
 
         # Accumulate fold losses: (n_folds, n_channels, n_thresh)
         fold_losses = self.torch.zeros(
-            (n_folds, n_channels, n_thresh), device=self.device
+            (n_folds, n_channels, n_thresh), device=self.device,
+            dtype=self.dtype
         )
 
         for fold_idx, (train_idx, test_idx) in enumerate(cv_splits):
@@ -503,8 +504,8 @@ class GPUThresholdOptimizer:
 
             # Accumulate fold losses
             fold_losses = self.torch.zeros(
-            (n_folds, n_thresh), device=self.device, dtype=self.dtype
-        )
+                (n_folds, n_thresh), device=self.device, dtype=self.dtype
+            )
 
             for fold_idx in range(n_folds):
                 train_idx_t = train_indices[fold_idx]
