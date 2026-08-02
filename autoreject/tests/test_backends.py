@@ -825,3 +825,95 @@ class TestMultiBackendConsistency:
             reject_log_torch.bad_epochs,
             err_msg="reject_log.bad_epochs differ between backends"
         )
+
+
+class TestThresholdSearchReproducibility:
+    """The per-channel threshold search must be configurable and consistent.
+
+    The search minimises a cross-validated loss whose noise scales as
+    1 / n_splits. On short recordings that objective is flat -- a large share of
+    candidate thresholds sit within one standard error of the optimum -- so
+    argmin ends up breaking a near-tie and the result tracks `random_state`.
+    Measured on 81-epoch EEG, varying only the seed moved the retained epoch
+    count between 54 and 80 of 81; raising n_splits to 100 cut the seed-to-seed
+    spread of selected thresholds by ~89%.
+
+    These tests do not assert a particular stability level (that is data
+    dependent). They assert the knob exists, is honoured, and stays identical
+    between the CPU and GPU paths -- the property whose absence would let the
+    two backends silently become different estimators.
+    """
+
+    @staticmethod
+    def _toy_epochs():
+        import mne
+
+        ch_names = ['Fp1', 'Fp2', 'F3', 'F4', 'C3', 'C4', 'P3', 'P4']
+        info = mne.create_info(ch_names, 100.0, ch_types=['eeg'] * len(ch_names))
+        info.set_montage(mne.channels.make_standard_montage('standard_1020'))
+        rng = np.random.RandomState(42)
+        data = rng.randn(20, len(ch_names), 100) * 1e-6
+        data[5, 2, :] += 50e-6
+        events = np.column_stack([
+            np.arange(0, 20 * 100, 100),
+            np.zeros(20, dtype=int),
+            np.ones(20, dtype=int),
+        ])
+        return mne.EpochsArray(data, info, events, tmin=0, verbose=False)
+
+    def test_thresh_n_splits_defaults_to_10_everywhere(self):
+        """Default must stay 10 on every entry point (no behaviour change)."""
+        import inspect
+
+        from autoreject.autoreject import _compute_thresholds, compute_thresholds
+        from autoreject import AutoReject
+
+        for func in (compute_thresholds, _compute_thresholds):
+            param = inspect.signature(func).parameters.get("thresh_n_splits")
+            assert param is not None, f"{func.__name__} lost thresh_n_splits"
+            assert param.default == 10, f"{func.__name__} default changed"
+
+        assert inspect.signature(AutoReject.__init__).parameters[
+            "thresh_n_splits"].default == 10
+
+    def test_thresh_n_splits_matches_between_backends(self):
+        """CPU and GPU threshold searches must expose the SAME default.
+
+        If these drift apart the backends cross-validate over different numbers
+        of splits, i.e. they are no longer the same estimator, while every
+        aggregate summary would still look identical.
+        """
+        import inspect
+
+        from autoreject.autoreject import _compute_thresholds
+
+        try:
+            from autoreject.gpu_pipeline import compute_thresholds_gpu
+        except ImportError:  # pragma: no cover - torch optional
+            pytest.skip("GPU pipeline unavailable")
+
+        cpu = inspect.signature(_compute_thresholds).parameters["thresh_n_splits"]
+        gpu = inspect.signature(compute_thresholds_gpu).parameters["thresh_n_splits"]
+        assert cpu.default == gpu.default, (
+            f"threshold-search n_splits differs between backends: "
+            f"cpu={cpu.default} gpu={gpu.default}"
+        )
+
+    def test_thresh_n_splits_is_actually_used(self, monkeypatch):
+        """The value must reach StratifiedShuffleSplit, not be silently ignored."""
+        import autoreject.autoreject as arj
+        from sklearn.model_selection import StratifiedShuffleSplit as Base
+
+        seen = []
+
+        class Recording(Base):
+            def __init__(self, n_splits=10, **kw):
+                seen.append(n_splits)
+                super().__init__(n_splits=n_splits, **kw)
+
+        monkeypatch.setattr(arj, "StratifiedShuffleSplit", Recording)
+        arj.compute_thresholds(self._toy_epochs(), random_state=42,
+                               augment=False, verbose=False, thresh_n_splits=7)
+
+        assert seen, "StratifiedShuffleSplit was never constructed"
+        assert set(seen) == {7}, f"expected n_splits=7 to be used, saw {set(seen)}"

@@ -412,7 +412,7 @@ def _compute_thresh(this_data, method="bayesian_optimization",
 
 def compute_thresholds(epochs, method="bayesian_optimization",
                        random_state=None, picks=None, augment=True,
-                       verbose=True, n_jobs=1):
+                       verbose=True, n_jobs=1, thresh_n_splits=10):
     """Compute thresholds for each channel.
 
     Parameters
@@ -441,6 +441,17 @@ def compute_thresholds(epochs, method="bayesian_optimization",
         If False, suppress all output messages.
     n_jobs : int
         Number of jobs to run in parallel
+    thresh_n_splits : int
+        Number of ``StratifiedShuffleSplit`` splits used by the per-channel
+        threshold search. Defaults to 10, the historical hardcoded value.
+
+        The search minimises a cross-validated loss whose noise scales as
+        ``1 / thresh_n_splits``. On short recordings that objective is flat --
+        a large fraction of candidate thresholds sit within one standard error
+        of the optimum -- so ``argmin`` ends up breaking a near-tie and the
+        outcome depends on ``random_state``. Raising this value reduces that
+        seed sensitivity at a cost linear in the number of splits (which is
+        close to free on the GPU path, where candidate losses are batched).
 
     Returns
     -------
@@ -456,12 +467,14 @@ def compute_thresholds(epochs, method="bayesian_optimization",
     """
     return _compute_thresholds(epochs, method=method,
                                random_state=random_state, picks=picks,
-                               augment=augment, verbose=verbose, n_jobs=n_jobs)
+                               augment=augment, verbose=verbose, n_jobs=n_jobs,
+                               thresh_n_splits=thresh_n_splits)
 
 
 def _compute_thresholds(epochs, method="bayesian_optimization",
                         random_state=None, picks=None, augment=True,
-                        dots=None, verbose=True,n_jobs=1):
+                        dots=None, verbose=True,n_jobs=1,
+                        thresh_n_splits=10):
     if method not in ["bayesian_optimization", "random_search"]:
         raise ValueError("`method` param not recognized")
     picks = _handle_picks(info=epochs.info, picks=picks)
@@ -475,7 +488,8 @@ def _compute_thresholds(epochs, method="bayesian_optimization",
             threshes.update(_compute_thresholds(
                     epochs=epochs, method=method, random_state=random_state,
                     picks=this_picks, augment=augment, dots=dots,
-                    verbose=verbose, n_jobs=n_jobs))
+                    verbose=verbose, n_jobs=n_jobs,
+                    thresh_n_splits=thresh_n_splits))
     else:
         n_epochs = len(epochs)
         data, y = epochs.get_data(**_GDKW), np.ones((n_epochs,))
@@ -486,7 +500,7 @@ def _compute_thresholds(epochs, method="bayesian_optimization",
             data = np.concatenate((epochs.get_data(**_GDKW),
                                    epochs_interp.get_data(**_GDKW)), axis=0)
             y = np.r_[np.zeros((n_epochs,)), np.ones((n_epochs,))]
-        cv = StratifiedShuffleSplit(n_splits=10, test_size=0.2,
+        cv = StratifiedShuffleSplit(n_splits=thresh_n_splits, test_size=0.2,
                                     random_state=random_state)
 
         ch_names = epochs.ch_names
@@ -1183,7 +1197,7 @@ class AutoReject:
                  thresh_func=None, cv=10, picks=None,
                  thresh_method="bayesian_optimization",
                  n_jobs=1, random_state=None, verbose=True,
-                 device="auto"):
+                 device="auto", thresh_n_splits=10):
         """Initialize the AutoReject class."""
         self.n_interpolate = n_interpolate
         self.consensus = consensus
@@ -1194,6 +1208,7 @@ class AutoReject:
         self.n_jobs = n_jobs
         self.random_state = random_state
         self.device = device
+        self.thresh_n_splits = thresh_n_splits
 
         if self.consensus is None:
             self.consensus = np.linspace(0, 1.0, 11)
@@ -1347,14 +1362,16 @@ class AutoReject:
             thresh_func = partial(compute_thresholds_gpu,
                                   method=self.thresh_method,
                                   random_state=self.random_state,
-                                  device=device)
+                                  device=device,
+                                  thresh_n_splits=self.thresh_n_splits)
             if self.verbose:
                 print(f"Using GPU acceleration (device={device})")
         else:
             thresh_func = partial(_compute_thresholds, n_jobs=self.n_jobs,
                                   method=self.thresh_method,
                                   random_state=self.random_state,
-                                  dots=self.dots)
+                                  dots=self.dots,
+                                  thresh_n_splits=self.thresh_n_splits)
 
         if self.n_interpolate is None:
             if len(self.picks_) < 4:
