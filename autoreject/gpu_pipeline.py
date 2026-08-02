@@ -594,6 +594,14 @@ class GPUThresholdOptimizer:
                     return cache[thresh]
 
                 n_epochs_thresh = len(all_threshes)
+                # NOTE: 40 initial design points here, vs 5 on the CPU path
+                # (autoreject.py::_compute_thresh) and in upstream autoreject.
+                # Same bayes_opt, same acquisition, same max_iter, same seed --
+                # only this count differs, so the two backends do not run quite
+                # the same search. Measured on real EEG the selected thresholds
+                # still agree to ~1e-8 median, so this is a conformity issue
+                # rather than an accuracy one; left unchanged here because
+                # altering it would move results. Worth unifying deliberately.
                 idx = np.concatenate(
                     (
                         np.linspace(0, n_epochs_thresh, 40, endpoint=False, dtype=int),
@@ -616,6 +624,14 @@ class GPUThresholdOptimizer:
 
         return best_thresholds
 
+    # NOTE: UNUSED. Nothing in the package calls compute_thresh_gpu -- the live
+    # GPU path is AutoReject.fit -> compute_thresholds_gpu ->
+    # compute_all_thresholds_gpu (above). Kept for reference, but be aware that
+    # its `cv_splits is None` fallback below builds SHUFFLED folds via
+    # rng.permutation, whereas every executed path (CPU and GPU alike) uses
+    # StratifiedShuffleSplit. Reading this method as if it were live leads to
+    # the false conclusion that the two backends cross-validate differently.
+    # If it is not intended for future use, deleting it would remove that trap.
     def compute_thresh_gpu(
         self,
         data_1d,
@@ -754,6 +770,7 @@ def compute_thresholds_gpu(
     n_jobs=1,
     device=None,
     dots=None,
+    thresh_n_splits=10,
 ):
     """
     Compute channel-wise thresholds using GPU acceleration.
@@ -814,8 +831,13 @@ def compute_thresholds_gpu(
         data = np.concatenate((data, interp_data), axis=0)
         y = np.r_[np.zeros((n_epochs,)), np.ones((n_epochs,))]
 
-    # Create CV splits once
-    cv = StratifiedShuffleSplit(n_splits=10, test_size=0.2, random_state=random_state)
+    # Create CV splits once. Must stay identical to the CPU path
+    # (autoreject.py::_compute_thresholds) or the two backends are different
+    # estimators; tests/test_backends.py::TestThresholdSearchReproducibility::
+    # test_thresh_n_splits_matches_between_backends guards this.
+    cv = StratifiedShuffleSplit(
+        n_splits=thresh_n_splits, test_size=0.2, random_state=random_state
+    )
     cv_splits = list(cv.split(data, y))
 
     # Initialize GPU optimizer
